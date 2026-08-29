@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Terms the translator must NOT reinterpret. Keep this list SHORT.",
+    "",
+    "NLLB already preserves ordinary proper nouns - measured on this project's",
+    "own clips it kept 15/16 (David Malan, CS50, Harvard, edX, YouTube,",
+    "Apple TV, Scratch, Barton, Stark, Legolas, Thor, Hulk, Fury, Romanoff,",
+    "Rogers). Adding those here would only make things worse: masking a word",
+    "starves the model of context and the rest of the sentence degrades.",
+    "",
+    "Only list words that are BOTH a common noun and a name in your material -",
+    "the ones the model genuinely cannot resolve. 'Captain' is the example:",
+    "as a rank it really is 'Dai uy', but as what people call Steve Rogers it",
+    "has to stay 'Captain'.",
+    "",
+    "  \"Captain\": \"Captain\"     -> keep the English word",
+    "  \"Captain\": \"Doi truong\"  -> force this exact rendering",
+    "",
+    "Keys match whole-word and case-sensitively. \"*\" applies to every source",
+    "language. Delete the entries below if they do not apply to your video."
+  ],
+  "*": {},
+  "en": {
+    "Captain": "Captain",
+    "Cap": "Cap"
+  }
+}

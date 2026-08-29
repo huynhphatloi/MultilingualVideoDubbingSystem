@@ -1,0 +1,21 @@
+[project]
+name = "mvds-ai-service"
+version = "1.0.0"
+# 3.10 is the floor (coqui-tts needs >=3.10, <3.15). The images ship
+# 3.11; keeping the code 3.10-clean means the tests run anywhere.
+requires-python = ">=3.10,<3.15"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# Notebook cells share one namespace and legitimately re-import between them;
+# linting them reports the notebook format, not the code. The logic they drive
+# lives in colab/*.py, which IS linted.
+extend-exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["B008", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/api/routes/*.py" = ["B008"]

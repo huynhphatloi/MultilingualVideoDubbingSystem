@@ -1,0 +1,10 @@
+# Downloaded weights and benchmark artefacts - regenerable, and large.
+checkpoints/
+results/
+refs/
+out/
+*.wav
+*.pt
+*.pth
+*.onnx
+*.safetensors

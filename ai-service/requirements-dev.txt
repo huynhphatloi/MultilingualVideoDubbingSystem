@@ -1,0 +1,8 @@
+# Test / lint tooling. Not installed in the runtime image.
+#   pip install -r ai-service/requirements-dev.txt
+#
+# `make test` needs pytest; it used to be undeclared, so a freshly created
+# .venv could not run the test suite at all.
+-r requirements.txt
+pytest==8.3.4
+ruff==0.9.2

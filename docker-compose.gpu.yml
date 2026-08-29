@@ -1,0 +1,25 @@
+# =============================================================================
+# NVIDIA GPU override.
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# Requires: NVIDIA driver + nvidia-container-toolkit on the host.
+# =============================================================================
+services:
+  ai-service:
+    build:
+      target: gpu
+      args:
+        TORCH_VARIANT: cu128
+    image: mvds/ai-service:gpu
+    environment:
+      DEVICE: cuda
+      COMPUTE_TYPE: float16
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

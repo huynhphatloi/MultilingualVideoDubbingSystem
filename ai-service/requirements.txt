@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------------------
+# Framework / infrastructure
+# ---------------------------------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.5
+pydantic-settings==2.7.1
+SQLAlchemy==2.0.36
+psycopg[binary]==3.2.3
+minio==7.2.15
+httpx==0.28.1
+
+# ---------------------------------------------------------------------------
+# Numeric / audio primitives
+#   numpy 2.2.x is the overlap of numba (<2.6) and librosa (>=2.1).
+# ---------------------------------------------------------------------------
+numpy==2.2.6
+scipy==1.15.3
+soundfile==0.13.1
+
+# ---------------------------------------------------------------------------
+# AI models (all free / open weights)
+# ---------------------------------------------------------------------------
+faster-whisper==1.2.1               # ASR  (CTranslate2 Whisper)
+transformers==4.57.6                # NLLB-200, SeamlessM4T, MMS-TTS
+sentencepiece==0.2.0
+accelerate==1.10.1
+protobuf==5.29.2
+
+# Speaker diarization.
+#   community-1 is a COMPLETE pipeline (segmentation + embedding + PLDA + VBx),
+#   so segmentation-3.0 / speaker-diarization-3.1 are no longer needed.
+#   pyannote.audio 4.x is what pins torch to >=2.8 (see requirements-*.txt).
+pyannote.audio==4.0.7
+
+# Speech / background separation.
+#   PINNED TO 4.0.1 ON PURPOSE - DO NOT BUMP TO 4.1.x.
+#   demucs 4.1.0 added a hard dependency on `sphn` (a Rust extension). sphn has
+#   NO linux/arm64 wheel in any release, so on Apple Silicon pip compiles it from
+#   source, which drags in Rust + a CMake build of libopus and dies with
+#   "Compatibility with CMake < 3.5 has been removed from CMake".
+#   4.0.1 has no sphn dependency and its ta.load/ta.save calls are still valid
+#   in torchaudio 2.11 (verified: both keep the `encoding`/`bits_per_sample`
+#   kwargs demucs uses). All CLI flags used by services/separation.py exist.
+demucs==4.0.1
+
+# XTTS-v2 voice cloning (maintained fork).
+#
+# The [languages] extra is NOT optional in practice. Plain `coqui-tts` cannot
+# speak three of XTTS's own 17 languages, and it fails at SYNTHESIS time, after
+# ASR + translation have already run:
+#   ja -> ModuleNotFoundError: No module named 'cutlet'
+#   zh -> needs pypinyin + spacy-pkuseg
+#   ko -> needs ko-speech-tools[g2p]
+# There is no fallback for those: MMS-TTS has no jpn/kor checkpoint either
+# (facebook/mms-tts-jpn does not exist), so XTTS is the only engine that covers
+# them and a Japanese job failed on all 32 segments.
+coqui-tts[languages]==0.27.5
