@@ -1,291 +1,276 @@
-"""The GPU-side endpoint. One process, every engine, chosen per request.
-
-Serves every stage whose model would otherwise sit on the laptop's disk:
-
-    GET  /health      -> catalogue: which engines exist, what they speak
-    GET  /engines     -> the same list, without the server fields
-    POST /transcribe  -> raw Whisper windows        (saves 1.4 GB locally)
-         form: language?, model, word_timestamps, beam_size, vad_filter
-         file: audio                                (Opus, ~1.7 MB per 10 min)
-    POST /translate   -> translations + candidates  (saves 2.3 GB locally)
-         json: {source_language, target_language, engine, items:[{text, char_budget}]}
-    POST /synthesize  -> audio/wav
-         form: text, language, speed, engine?, speaker_id?, reference_id?
-         file: reference?         (only on the first call for a voice)
-         409 {"error": "missing_reference"} -> client re-uploads and retries
-
-3.7 GB of that is Whisper plus NLLB, which is the whole reason those two moved:
-they are the largest things the pipeline downloads, and this machine has no
-CUDA to run them on anyway.
-
-Two things make this worth a file rather than a notebook cell.
-
-**Engine per request.** ``engine=vixtts`` on one call and ``engine=f5_vi`` on
-the next means a full A/B over a real job is two runs with one env var changed,
-not two notebook sessions. The engine that actually spoke comes back in
-``X-TTS-Model``, so the manifest records it per segment and a mixed run is
-still readable afterwards.
-
-**One model resident at a time.** A T4 holds one cloning model comfortably and
-three not at all. Switching engines unloads the previous one, so the failure
-mode of a comparison run is "the first call after a switch is slow" instead of
-an OOM twenty segments in. Set ``ALLOW_MULTI_RESIDENT=1`` on an A100 to keep
-them warm.
-
-**Reference caching.** The pipeline calls this once or twice per segment and
-every call for one character carries the same multi-second wav. Files are
-addressed by sha1 after the first upload; a restarted server answers 409 and
-the client re-uploads exactly the references still in use.
-"""
+"""Google Colab AI backend for transcription, translation, and speech."""
 from __future__ import annotations
 
-import hashlib
-import itertools
-import logging
+import gc
+import io
 import os
+import shutil
+import tempfile
 import threading
 from pathlib import Path
 
-import engines as registry
-import stages
+import soundfile as sf
+import torch
 from fastapi import FastAPI, File, Form, Header, HTTPException, Response, UploadFile
+from faster_whisper import WhisperModel
+from pydantic import BaseModel
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, VitsModel
 
-log = logging.getLogger("tts-server")
+AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
+TRANSLATION_MODEL = os.getenv(
+    "TRANSLATION_MODEL", "facebook/nllb-200-distilled-600M"
+)
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-REF_DIR = Path(os.environ.get("REF_DIR", "/content/refs"))
-OUT_DIR = Path(os.environ.get("OUT_DIR", "/content/out"))
-AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
-DEFAULT_ENGINE = os.environ.get("DEFAULT_ENGINE", "vixtts")
-#: Sample rate advertised to the client. It resamples if an engine disagrees,
-#: so this is a hint, not a contract.
-SAMPLE_RATE = int(os.environ.get("SAMPLE_RATE", "24000"))
-ALLOW_MULTI_RESIDENT = os.environ.get("ALLOW_MULTI_RESIDENT", "") == "1"
+# ISO-639-1 is the public API. MMS uses ISO-639-3 and NLLB uses FLORES codes.
+LANGUAGES = {
+    "en": ("English", "eng", "eng_Latn"),
+    "vi": ("Vietnamese", "vie", "vie_Latn"),
+    "ja": ("Japanese", "jpn", "jpn_Jpan"),
+    "ko": ("Korean", "kor", "kor_Hang"),
+    "zh": ("Chinese", "cmn", "zho_Hans"),
+    "fr": ("French", "fra", "fra_Latn"),
+    "de": ("German", "deu", "deu_Latn"),
+    "es": ("Spanish", "spa", "spa_Latn"),
+    "pt": ("Portuguese", "por", "por_Latn"),
+    "it": ("Italian", "ita", "ita_Latn"),
+    "ru": ("Russian", "rus", "rus_Cyrl"),
+    "nl": ("Dutch", "nld", "nld_Latn"),
+    "pl": ("Polish", "pol", "pol_Latn"),
+    "tr": ("Turkish", "tur", "tur_Latn"),
+    "ar": ("Arabic", "ara", "arb_Arab"),
+    "hi": ("Hindi", "hin", "hin_Deva"),
+    "id": ("Indonesian", "ind", "ind_Latn"),
+    "th": ("Thai", "tha", "tha_Thai"),
+    "cs": ("Czech", "ces", "ces_Latn"),
+    "hu": ("Hungarian", "hun", "hun_Latn"),
+    "uk": ("Ukrainian", "ukr", "ukr_Cyrl"),
+    "ro": ("Romanian", "ron", "ron_Latn"),
+    "sv": ("Swedish", "swe", "swe_Latn"),
+    "da": ("Danish", "dan", "dan_Latn"),
+    "fi": ("Finnish", "fin", "fin_Latn"),
+    "no": ("Norwegian", "nob", "nob_Latn"),
+    "el": ("Greek", "ell", "ell_Grek"),
+    "he": ("Hebrew", "heb", "heb_Hebr"),
+    "ms": ("Malay", "zsm", "zsm_Latn"),
+    "fa": ("Persian", "pes", "pes_Arab"),
+    "bn": ("Bengali", "ben", "ben_Beng"),
+    "ta": ("Tamil", "tam", "tam_Taml"),
+    "te": ("Telugu", "tel", "tel_Telu"),
+    "ur": ("Urdu", "urd", "urd_Arab"),
+    "sw": ("Swahili", "swh", "swh_Latn"),
+    "tl": ("Tagalog", "tgl", "tgl_Latn"),
+    "km": ("Khmer", "khm", "khm_Khmr"),
+    "lo": ("Lao", "lao", "lao_Laoo"),
+    "my": ("Burmese", "mya", "mya_Mymr"),
+    "bg": ("Bulgarian", "bul", "bul_Cyrl"),
+    "hr": ("Croatian", "hrv", "hrv_Latn"),
+    "sr": ("Serbian", "srp", "srp_Cyrl"),
+    "sk": ("Slovak", "slk", "slk_Latn"),
+    "sl": ("Slovenian", "slv", "slv_Latn"),
+    "ca": ("Catalan", "cat", "cat_Latn"),
+    "hy": ("Armenian", "hye", "hye_Armn"),
+    "ka": ("Georgian", "kat", "kat_Geor"),
+    "ne": ("Nepali", "npi", "npi_Deva"),
+    "si": ("Sinhala", "sin", "sin_Sinh"),
+    "mn": ("Mongolian", "khk", "khk_Cyrl"),
+}
 
-REF_DIR.mkdir(parents=True, exist_ok=True)
-OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-app = FastAPI(title="Multilingual dubbing - TTS lab")
-
-#: Serialise engine swaps. Two requests naming different engines must not race
-#: to unload each other's weights mid-inference.
-_swap_lock = threading.Lock()
-_resident: str | None = None
-#: Output filenames only need to be unique; itertools.count is atomic.
-_seq = itertools.count(1)
+app = FastAPI(title="DubFlow Colab AI", version="2.0")
+_lock = threading.Lock()
+_whisper = None
+_translation = None
+_tts_tokenizer = None
+_tts_model = None
+_tts_language: str | None = None
 
 
-def _auth(authorization: str | None) -> None:
+class TranslationRequest(BaseModel):
+    source_language: str
+    target_language: str
+    texts: list[str]
+
+
+def _authorize(authorization: str | None) -> None:
     if AUTH_TOKEN and authorization != f"Bearer {AUTH_TOKEN}":
-        raise HTTPException(status_code=401, detail="bad token")
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
 
 
-def _acquire(name: str):  # noqa: ANN202
-    """Return a loaded engine, evicting the previous one unless told not to."""
-    global _resident
-    with _swap_lock:
-        engine = registry.get(name)
-        if not ALLOW_MULTI_RESIDENT and _resident and _resident != name:
-            freed = registry.unload_all(keep=name)
-            # Whisper (1.5 GB) and NLLB (2.5 GB) also sit in VRAM once used.
-            # A T4 has 16 GB and a cloning engine wants 3; holding all three
-            # is how a job OOMs at segment twenty on the machine that
-            # transcribed it fine ten minutes earlier.
-            freed += stages.free_vram()
-            if freed:
-                log.info("swapped out %s for %s", ", ".join(freed), name)
-        engine.ensure_loaded()
-        _resident = name
-        return engine
+def _validate_language(language: str) -> str:
+    language = language.strip().lower()
+    if language not in LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported language '{language}'")
+    return language
+
+
+def _load_whisper():  # noqa: ANN202
+    global _whisper
+    if _whisper is None:
+        compute_type = "float16" if DEVICE == "cuda" else "int8"
+        _whisper = WhisperModel(
+            WHISPER_MODEL, device=DEVICE, compute_type=compute_type
+        )
+    return _whisper
+
+
+def _load_translation():  # noqa: ANN202
+    global _translation
+    if _translation is None:
+        tokenizer = AutoTokenizer.from_pretrained(TRANSLATION_MODEL)
+        model = AutoModelForSeq2SeqLM.from_pretrained(TRANSLATION_MODEL)
+        _translation = (tokenizer, model.to(DEVICE).eval())
+    return _translation
+
+
+def _load_tts(language: str):  # noqa: ANN202
+    """Keep only the selected TTS language model resident in memory."""
+    global _tts_language, _tts_model, _tts_tokenizer
+    if _tts_language == language and _tts_model is not None:
+        return _tts_tokenizer, _tts_model
+
+    _tts_tokenizer = None
+    _tts_model = None
+    _tts_language = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    repository = f"facebook/mms-tts-{LANGUAGES[language][1]}"
+    _tts_tokenizer = AutoTokenizer.from_pretrained(repository)
+    _tts_model = VitsModel.from_pretrained(repository).to(DEVICE).eval()
+    _tts_language = language
+    return _tts_tokenizer, _tts_model
 
 
 @app.get("/health")
 def health() -> dict:
-    """Catalogue. Deliberately answerable with nothing loaded and no GPU."""
-    catalogue = registry.describe_all()
-    default = registry.get(DEFAULT_ENGINE)
     return {
-        # Flat fields first: this is what the current client reads.
-        "engine": DEFAULT_ENGINE,
-        "languages": list(default.languages),
-        "voice_cloning": default.voice_cloning,
-        "sample_rate": SAMPLE_RATE,
-        # The catalogue a comparison run needs.
-        "engines": catalogue,
-        "resident": _resident,
-        "stages": {"transcribe": True, "translate": True, "synthesize": True},
-        "stage_models_loaded": stages.loaded(),
-        "multi_resident": ALLOW_MULTI_RESIDENT,
-        "device": _device(),
-        "references_cached": len(list(REF_DIR.glob("*.wav"))),
+        "status": "ready",
+        "device": DEVICE,
+        "services": ["transcription", "translation", "speech"],
+        "whisper_model": WHISPER_MODEL,
+        "translation_model": TRANSLATION_MODEL,
+        "tts_model": f"facebook/mms-tts-{LANGUAGES[_tts_language][1]}"
+        if _tts_language
+        else None,
+        "languages": [
+            {"code": code, "name": values[0]}
+            for code, values in LANGUAGES.items()
+        ],
     }
 
 
-@app.get("/engines")
-def list_engines() -> dict:
-    return {"engines": registry.describe_all(), "default": DEFAULT_ENGINE}
-
-
 @app.post("/transcribe")
-async def transcribe(
-    audio: UploadFile = File(...),
-    language: str = Form(""),
-    model: str = Form("medium"),
-    word_timestamps: str = Form("true"),
-    beam_size: int = Form(5),
-    vad_filter: str = Form("true"),
-    condition_on_previous_text: str = Form("false"),
+def transcribe(
+    file: UploadFile = File(...),
+    language: str = Form("auto"),
     authorization: str | None = Header(None),
 ) -> dict:
-    """Whisper on the GPU. Returns raw windows - see stages.py on why."""
-    _auth(authorization)
-    upload = OUT_DIR / f"asr_{next(_seq):06d}{Path(audio.filename or 'a.opus').suffix}"
-    upload.write_bytes(await audio.read())
+    _authorize(authorization)
+    requested = language.strip().lower()
+    source = None if requested in {"", "auto"} else _validate_language(requested)
+    suffix = Path(file.filename or "audio.wav").suffix or ".wav"
+
+    temporary_path = None
     try:
-        return stages.transcribe(
-            str(upload), language=language or None, model=model,
-            word_timestamps=_flag(word_timestamps), beam_size=beam_size,
-            vad_filter=_flag(vad_filter),
-            condition_on_previous_text=_flag(condition_on_previous_text),
-        )
-    except Exception as exc:  # noqa: BLE001 - 5xx is retryable, and should be
-        log.exception("transcribe failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
+            shutil.copyfileobj(file.file, temporary)
+            temporary_path = temporary.name
+        with _lock:
+            raw_segments, info = _load_whisper().transcribe(
+                temporary_path,
+                language=source,
+                vad_filter=True,
+                beam_size=5,
+            )
+            segments = [
+                {
+                    "id": index,
+                    "start": round(float(segment.start), 3),
+                    "end": round(float(segment.end), 3),
+                    "source_text": segment.text.strip(),
+                }
+                for index, segment in enumerate(raw_segments)
+                if segment.text.strip()
+            ]
+        detected = source or str(info.language)
+        _validate_language(detected)
+        if not segments:
+            raise HTTPException(status_code=422, detail="Whisper found no speech")
+        return {"source_language": detected, "segments": segments}
     finally:
-        upload.unlink(missing_ok=True)
+        if temporary_path:
+            Path(temporary_path).unlink(missing_ok=True)
 
 
 @app.post("/translate")
-def translate(body: dict, authorization: str | None = Header(None)) -> dict:
-    """NLLB / SeamlessM4T on the GPU. Text in, text out - nothing else moves."""
-    _auth(authorization)
-    items = body.get("items") or []
-    if not items:
-        return {"engine": body.get("engine", "nllb"), "results": []}
-    try:
-        return stages.translate(
-            items,
-            source_language=body.get("source_language", ""),
-            target_language=body.get("target_language", ""),
-            engine=body.get("engine") or "nllb",
-            num_beams=int(body.get("num_beams") or 4),
-            max_new_tokens=int(body.get("max_new_tokens") or 256),
+def translate(
+    request: TranslationRequest,
+    authorization: str | None = Header(None),
+) -> dict:
+    _authorize(authorization)
+    source = _validate_language(request.source_language)
+    target = _validate_language(request.target_language)
+    if not request.texts or len(request.texts) > 500:
+        raise HTTPException(status_code=400, detail="texts must contain 1 to 500 items")
+    if source == target:
+        return {"translations": request.texts}
+
+    with _lock:
+        tokenizer, model = _load_translation()
+        tokenizer.src_lang = LANGUAGES[source][2]
+        encoded = tokenizer(
+            request.texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=512,
         )
-    except ValueError as exc:
-        # An unknown language pair is the caller's mistake and will not fix
-        # itself on a retry - say so with a 4xx.
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        log.exception("translate failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-def _flag(value: str) -> bool:
-    return str(value).strip().lower() in ("1", "true", "yes", "on")
+        encoded = {name: value.to(DEVICE) for name, value in encoded.items()}
+        target_token = tokenizer.convert_tokens_to_ids(LANGUAGES[target][2])
+        with torch.inference_mode():
+            output = model.generate(
+                **encoded,
+                forced_bos_token_id=target_token,
+                max_new_tokens=256,
+                num_beams=4,
+            )
+        translations = tokenizer.batch_decode(output, skip_special_tokens=True)
+    return {"translations": [text.strip() for text in translations]}
 
 
 @app.post("/synthesize")
-async def synthesize(
+def synthesize(
     text: str = Form(...),
     language: str = Form("vi"),
     speed: float = Form(1.0),
-    engine: str = Form(""),
-    speaker_id: str = Form(""),
-    reference_id: str = Form(""),
-    reference: UploadFile | None = File(None),
     authorization: str | None = Header(None),
 ) -> Response:
-    _auth(authorization)
+    _authorize(authorization)
+    language = _validate_language(language)
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+    if len(text) > 2000:
+        raise HTTPException(status_code=400, detail="Text must be at most 2000 characters")
+    if not 0.5 <= speed <= 2.0:
+        raise HTTPException(status_code=400, detail="Speed must be between 0.5 and 2.0")
 
-    name = engine or DEFAULT_ENGINE
-    try:
-        selected = registry.get(name)
-    except KeyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with _lock:
+        tokenizer, model = _load_tts(language)
+        encoded = tokenizer(text, return_tensors="pt")
+        encoded = {name: value.to(DEVICE) for name, value in encoded.items()}
+        model.speaking_rate = speed
+        with torch.inference_mode():
+            waveform = model(**encoded).waveform.squeeze().float().cpu().numpy()
+        sample_rate = int(model.config.sampling_rate)
 
-    if not selected.supports(language):
-        # A considered "no". The client does not retry 4xx, which is correct:
-        # retrying an unsupported language just burns the tunnel.
-        raise HTTPException(
-            status_code=400,
-            detail=f"{name} does not speak '{language}' "
-                   f"(it has {list(selected.languages)})",
-        )
-
-    ref_path = _resolve_reference(selected, reference_id, reference)
-
-    out = OUT_DIR / f"seg_{next(_seq):06d}.wav"
-    try:
-        loaded = _acquire(name)
-        spoken = loaded.speak(text, language, out,
-                              reference_wav=ref_path, speed=speed)
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 - 5xx is retryable, and should be
-        log.exception("%s failed", name)
-        raise HTTPException(status_code=500, detail=f"{name}: {exc}") from exc
-
-    data = out.read_bytes()
-    out.unlink(missing_ok=True)
+    output = io.BytesIO()
+    sf.write(output, waveform, sample_rate, format="WAV", subtype="PCM_16")
+    repository = f"facebook/mms-tts-{LANGUAGES[language][1]}"
     return Response(
-        content=data,
+        content=output.getvalue(),
         media_type="audio/wav",
-        headers={
-            # Report the engine that spoke, not the transport. A manifest
-            # saying `remote: 32` tells you nothing when the point of the run
-            # was to compare viXTTS against F5.
-            "X-TTS-Model": spoken.engine,
-            "X-TTS-Voice-Cloned": str(spoken.voice_cloned).lower(),
-            "X-TTS-Sample-Rate": str(spoken.sample_rate),
-            "X-TTS-Rtf": f"{spoken.rtf:.3f}",
-            "X-TTS-Compute-Seconds": f"{spoken.compute_seconds:.3f}",
-        },
+        headers={"X-TTS-Model": repository, "X-TTS-Sample-Rate": str(sample_rate)},
     )
-
-
-def _resolve_reference(engine, reference_id: str,  # noqa: ANN001
-                       upload: UploadFile | None) -> Path | None:
-    """Find the reference wav, or ask the client to send it again.
-
-    The 409 is the whole point: a Colab runtime that restarted has an empty
-    REF_DIR but the client still holds the hash. Answering 409 instead of 400
-    tells it to re-upload rather than fail the segment.
-    """
-    if upload is not None:
-        raw = upload.file.read()
-        digest = reference_id or hashlib.sha1(raw).hexdigest()  # noqa: S324
-        path = REF_DIR / f"{digest}.wav"
-        path.write_bytes(raw)
-        return path
-
-    if reference_id:
-        path = REF_DIR / f"{reference_id}.wav"
-        if path.exists():
-            return path
-        raise HTTPException(status_code=409, detail="missing_reference")
-
-    if engine.needs_reference():
-        raise HTTPException(
-            status_code=400,
-            detail=f"{engine.name} clones a voice and needs a reference wav",
-        )
-    return None
-
-
-@app.post("/unload")
-def unload(authorization: str | None = Header(None)) -> dict:
-    """Free VRAM without restarting the runtime - useful between benchmarks."""
-    global _resident
-    _auth(authorization)
-    freed = registry.unload_all(keep=None) + stages.free_vram()
-    _resident = None
-    return {"unloaded": freed}
-
-
-def _device() -> str:
-    try:
-        import torch
-
-        return (f"cuda:{torch.cuda.get_device_name(0)}"
-                if torch.cuda.is_available() else "cpu")
-    except Exception:  # noqa: BLE001
-        return "unknown"

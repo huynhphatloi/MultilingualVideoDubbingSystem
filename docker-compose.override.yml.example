@@ -1,8 +1,0 @@
-# Rename to docker-compose.override.yml for local dev conveniences
-# (auto-reload of the FastAPI app + verbose logging).
-services:
-  ai-service:
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/srv/app"]
-    environment:
-      LOG_LEVEL: DEBUG
-      LOG_JSON: "false"

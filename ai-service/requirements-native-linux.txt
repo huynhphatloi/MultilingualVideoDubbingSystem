@@ -1,6 +1,0 @@
-# Native run on Linux. Swap the index for cu128 if you have an NVIDIA GPU:
-#   --extra-index-url https://download.pytorch.org/whl/cu128
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.11.0
-torchaudio==2.11.0
-torchcodec==0.11.0

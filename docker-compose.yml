@@ -1,257 +1,57 @@
-# =============================================================================
-# Multilingual Video Translation & Dubbing System
-# Default profile: CPU only (works on macOS / Apple Silicon / any Linux)
-# For NVIDIA GPU:  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
-# =============================================================================
-
-name: ${COMPOSE_PROJECT_NAME:-mvds}
-
-x-logging: &default-logging
-  driver: json-file
-  options:
-    max-size: "10m"
-    max-file: "3"
-
 services:
-  # ---------------------------------------------------------------------------
-  # PostgreSQL - backing store for n8n AND for the ai-service job registry
-  # ---------------------------------------------------------------------------
-  postgres:
-    image: postgres:16-alpine
-    container_name: mvds-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      N8N_DB_NAME: ${N8N_DB_NAME}
-      N8N_DB_USER: ${N8N_DB_USER}
-      N8N_DB_PASSWORD: ${N8N_DB_PASSWORD}
-      APP_DB_NAME: ${APP_DB_NAME}
-      APP_DB_USER: ${APP_DB_USER}
-      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
-      TZ: ${TZ}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
-    ports:
-      - "${POSTGRES_PORT:-47432}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-    logging: *default-logging
-    networks: [mvds]
-
-  # ---------------------------------------------------------------------------
-  # MinIO - S3 compatible object storage for all job artifacts
-  # ---------------------------------------------------------------------------
-  minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: mvds-minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      MINIO_BROWSER_REDIRECT_URL: http://localhost:${MINIO_CONSOLE_PORT:-47901}
-      TZ: ${TZ}
-    volumes:
-      - minio-data:/data
-    ports:
-      - "${MINIO_API_PORT:-47900}:9000"
-      - "${MINIO_CONSOLE_PORT:-47901}:9001"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-    logging: *default-logging
-    networks: [mvds]
-
-  # ---------------------------------------------------------------------------
-  # One-shot bucket bootstrap (creates bucket + lifecycle + anonymous download)
-  # ---------------------------------------------------------------------------
-  minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
-    container_name: mvds-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      MINIO_BUCKET: ${MINIO_BUCKET}
-    entrypoint: ["/bin/sh", "/init/init-buckets.sh"]
-    volumes:
-      - ./infra/minio:/init:ro
-    restart: "no"
-    networks: [mvds]
-
-  # ---------------------------------------------------------------------------
-  # FastAPI AI / media service - all heavy lifting lives here.
-  #
-  # OPT-IN. `docker compose up -d` does NOT start it, because on macOS a
-  # container cannot reach the Apple GPU: Docker Desktop runs a Linux VM with no
-  # Metal passthrough, so every model would be stuck on CPU. The default setup
-  # runs this service natively (./scripts/setup-native.sh) where torch can use
-  # the `mps` backend.
-  #
-  # Start it in a container anyway - Linux hosts, NVIDIA GPUs, or a clean
-  # "everything in Docker" demo - with:
-  #     docker compose --profile docker-ai up -d
-  # ---------------------------------------------------------------------------
   ai-service:
-    profiles: ["docker-ai"]
     build:
-      context: ./ai-service
-      dockerfile: Dockerfile
-      target: cpu
-      args:
-        TORCH_VARIANT: cpu
-    image: mvds/ai-service:cpu
-    container_name: mvds-ai-service
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    env_file: [.env]
+      context: .
+      dockerfile: ai-service/Dockerfile
     environment:
-      # Hard-coded on purpose: .env carries the *native* endpoints (localhost),
-      # which are wrong from inside the compose network.
-      DATABASE_URL: postgresql+psycopg://${APP_DB_USER}:${APP_DB_PASSWORD}@postgres:5432/${APP_DB_NAME}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-localhost:47900}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      LOCAL_STORAGE_ROOT: /data/jobs
-      SCRATCH_ROOT: /data/jobs/_scratch
-      # .env carries the native (./models/...) paths; inside the container the
-      # cache lives on the model-cache volume.
-      HF_HOME: /models/huggingface
-      TORCH_HOME: /models/torch
-      XDG_CACHE_HOME: /models/cache
-      # No Metal inside the VM - never let DEVICE=mps leak into a container.
-      DEVICE: ${DOCKER_AI_DEVICE:-cpu}
-      # Stop transformers from downloading a second, silent copy of every
-      # .bin-only checkpoint (NLLB-200 = 2.46 GB) in a background thread.
-      DISABLE_SAFETENSORS_CONVERSION: "true"
-      TOKENIZERS_PARALLELISM: "false"
+      DATA_ROOT: /data/jobs
+      PUBLIC_BASE_URL: http://localhost:8000
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      TRANSLATION_MODEL: facebook/nllb-200-distilled-600M
+      DEVICE: cpu
+      COLAB_TTS_URL: ${COLAB_TTS_URL:-}
+      COLAB_TTS_TOKEN: ${COLAB_TTS_TOKEN:-}
+      COLAB_TTS_TIMEOUT: ${COLAB_TTS_TIMEOUT:-300}
+      N8N_WEBHOOK_URL: http://n8n:5678/webhook/dubbing/start
     volumes:
-      - ./ai-service/app:/srv/app:ro          # hot-reloadable source
-      - model-cache:/models                   # HF / torch / demucs weights
-      - ./data/jobs:/data/jobs                # local storage backend + scratch
+      - job-data:/data/jobs
+      - model-cache:/models
     ports:
-      - "${AI_SERVICE_PORT:-47800}:8000"
+      - "8000:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status==200 else 1)"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
-    shm_size: "2gb"
-    logging: *default-logging
-    networks: [mvds]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
-  # ---------------------------------------------------------------------------
-  # n8n Community Edition - workflow orchestrator (self-hosted, free)
-  # ---------------------------------------------------------------------------
   n8n:
     image: n8nio/n8n:1.95.3
-    container_name: mvds-n8n
-    restart: unless-stopped
     depends_on:
-      postgres:
+      ai-service:
         condition: service_healthy
-    extra_hosts:
-      # Lets the HTTP Request nodes reach the natively-running AI service.
-      - "host.docker.internal:host-gateway"
     environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME}
-      DB_POSTGRESDB_USER: ${N8N_DB_USER}
-      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
-      DB_POSTGRESDB_SCHEMA: public
-
-      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_HOST: localhost
       N8N_PORT: 5678
-      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
-      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:47678/}
-      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
-      TZ: ${TZ}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-
-      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-false}
-      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-admin}
-
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      GENERIC_TIMEZONE: Asia/Ho_Chi_Minh
       N8N_DIAGNOSTICS_ENABLED: "false"
-      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
-      N8N_RUNNERS_ENABLED: "true"
-      N8N_HIRING_BANNER_ENABLED: "false"
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      N8N_LOG_LEVEL: info
-      EXECUTIONS_DATA_SAVE_ON_ERROR: all
-      EXECUTIONS_DATA_SAVE_ON_SUCCESS: all
-      EXECUTIONS_DATA_SAVE_ON_PROGRESS: "true"
-      EXECUTIONS_DATA_PRUNE: "true"
-      EXECUTIONS_DATA_MAX_AGE: "336"
-      N8N_PAYLOAD_SIZE_MAX: "256"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
       N8N_DEFAULT_BINARY_DATA_MODE: filesystem
-
-      # ---- consumed by the workflow via $env / expressions -------------------
-      AI_SERVICE_BASE_URL: ${AI_SERVICE_BASE_URL:-http://host.docker.internal:47800}
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_PAYLOAD_SIZE_MAX: "256"
     volumes:
       - n8n-data:/home/node/.n8n
       - ./n8n/workflows:/workflows:ro
-      - ./data/jobs:/data/jobs
     ports:
-      - "${N8N_PORT:-47678}:5678"
-    logging: *default-logging
-    networks: [mvds]
-
-  # ---------------------------------------------------------------------------
-  # Web frontend (React + Vite, served by nginx, proxies /api -> ai-service)
-  # ---------------------------------------------------------------------------
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_N8N_URL: http://localhost:${N8N_PORT:-47678}
-        VITE_API_URL: http://localhost:${AI_SERVICE_PORT:-47800}
-        VITE_MINIO_URL: http://localhost:${MINIO_CONSOLE_PORT:-47901}
-    image: mvds/frontend:latest
-    container_name: mvds-frontend
-    restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      # host.docker.internal:47800 -> native AI service (default)
-      # ai-service:8000           -> containerised AI service (--profile docker-ai)
-      AI_SERVICE_UPSTREAM: ${AI_SERVICE_UPSTREAM:-host.docker.internal:47800}
-      N8N_UPSTREAM: ${N8N_UPSTREAM:-n8n:5678}
-      NGINX_ENVSUBST_FILTER: "^(AI_SERVICE_UPSTREAM|N8N_UPSTREAM)$$"
-    ports:
-      - "${FRONTEND_PORT:-47300}:80"
-    logging: *default-logging
-    networks: [mvds]
+      - "5678:5678"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:5678/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
 volumes:
-  postgres-data:
-  minio-data:
-  n8n-data:
+  job-data:
   model-cache:
-
-networks:
-  mvds:
-    driver: bridge
+  n8n-data:

@@ -1,30 +1,6 @@
-# Colab-side dependencies, grouped so a session installs only what it needs.
-# The notebook picks groups from the engine list; this file is the reference
-# and the way to reproduce a run outside Colab.
-#
-#   pip install -r requirements.txt                 # server + benchmark, no engines
-#   pip install coqui-tts==0.27.5                   # xtts_v2, vixtts
-#   pip install f5-tts                              # f5_vi, f5_base
-#   pip install transformers                        # mms
-#   pip install piper-tts                           # piper
-#   pip install edge-tts                            # edge
-
-# ---- always ----------------------------------------------------------------
-fastapi>=0.115
-uvicorn[standard]>=0.30
-python-multipart>=0.0.9      # FastAPI Form/File parsing
-soundfile>=0.12
-numpy>=1.24
-huggingface_hub>=0.25
-
-# ---- ASR + translation stages (server.py serves them; stages.py loads them) -
-# These two are the reason the laptop's models/ directory is empty: 1.4 GB of
-# whisper-medium and 2.3 GB of NLLB-200 now live here instead.
-faster-whisper>=1.0
-transformers>=4.44
-sentencepiece                # NLLB's tokenizer
-
-# ---- metrics (benchmark only; the server does not need these) --------------
-# Every one degrades to a blank column if absent - see metrics.py.
-speechbrain>=1.0             # ECAPA speaker similarity
-torchaudio                   # loading/resampling for both of the above
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+transformers==4.57.6
+sentencepiece==0.2.0
+soundfile==0.13.1

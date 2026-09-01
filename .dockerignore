@@ -1,6 +1,5 @@
-.git
-data
-models
-node_modules
-**/__pycache__
-**/.venv
+*
+!ai-service/
+!ai-service/**
+!frontend/
+!frontend/**

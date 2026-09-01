@@ -1,0 +1,315 @@
+{
+  "name": "Simple Multilingual Dubbing",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Simple Multilingual Video Dubbing",
+        "formDescription": "Upload a short video and choose the language for the new voice.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Video",
+              "fieldType": "file",
+              "acceptFileTypes": ".mp4,.mkv,.mov,.webm,.m4v",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Target Language",
+              "fieldType": "text",
+              "placeholder": "vi (also en, ja, ko, ar, fr, de, es...)",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Source Language",
+              "fieldType": "text",
+              "placeholder": "auto",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "onReceived",
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "formSubmittedText": "Video accepted. Open Executions to watch the seven stages."
+            }
+          }
+        }
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377001",
+      "name": "Upload Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [-1060, 300],
+      "webhookId": "ee71780b-5bb5-4460-9fe4-604b12862001",
+      "notes": "A quick built-in form for testing directly from n8n.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dubbing/start",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377011",
+      "name": "Frontend Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-620, 620],
+      "webhookId": "9cde2800-dc5b-41c8-933e-bde73b995011",
+      "notes": "The demo frontend calls this webhook after FastAPI stores the uploaded video.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nif (!body.job_id) throw new Error('job_id is required');\nreturn [{ json: { job_id: body.job_id } }];"
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377012",
+      "name": "Prepare Frontend Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 620],
+      "notes": "Normalizes the webhook payload before the visible processing stages.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\nreturn [{\n  json: {\n    target_language: form.json['Target Language'] || 'vi',\n    source_language: form.json['Source Language'] || 'auto'\n  },\n  binary: { video: form.binary[keys[0]] }\n}];"
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377002",
+      "name": "Prepare Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-840, 300],
+      "notes": "Technical adapter: gives the uploaded binary a predictable key.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/jobs/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "video"
+            },
+            {
+              "name": "target_language",
+              "value": "={{ $json.target_language }}"
+            },
+            {
+              "name": "source_language",
+              "value": "={{ $json.source_language }}"
+            }
+          ]
+        },
+        "options": { "timeout": 1800000 }
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377003",
+      "name": "1. Upload Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-620, 300],
+      "notes": "Creates data/jobs/<job_id> and stores the source video.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/extract",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": { "timeout": 1800000 }
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377004",
+      "name": "2. Extract Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-400, 300],
+      "notes": "FFmpeg creates a 16 kHz ASR file and a 48 kHz soundtrack file.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/transcribe",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": { "timeout": 7200000 }
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377005",
+      "name": "3. Speech to Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, 300],
+      "notes": "faster-whisper returns text with original start/end timestamps.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/translate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": { "timeout": 7200000 }
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377006",
+      "name": "4. Translate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 300],
+      "notes": "NLLB-200 translates all segments and writes translated.srt.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/synthesize",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": { "timeout": 10800000 }
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377007",
+      "name": "5. Generate Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 300],
+      "notes": "Calls the configured Google Colab /synthesize API. Without Colab, local MMS-TTS is the fallback.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/mix",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": { "timeout": 3600000 }
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377008",
+      "name": "6. Mix and Synchronize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "notes": "Places each voice at its Whisper timestamp and lowers the original soundtrack.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/render",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": { "timeout": 3600000 }
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377009",
+      "name": "7. Render Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 300],
+      "notes": "Muxes the new audio and translated soft subtitles into MP4.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c44192f2-a601-4a2c-8572-e278b6021001",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "c44192f2-a601-4a2c-8572-e278b6021002",
+              "name": "status",
+              "value": "completed",
+              "type": "string"
+            },
+            {
+              "id": "c44192f2-a601-4a2c-8572-e278b6021003",
+              "name": "download_video",
+              "value": "={{ $json.output_url }}",
+              "type": "string"
+            },
+            {
+              "id": "c44192f2-a601-4a2c-8572-e278b6021004",
+              "name": "download_subtitle",
+              "value": "={{ $json.subtitle_url }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0bd18971-d5c4-4f07-8131-f84f8a377010",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [920, 300],
+      "notes": "Open these URLs in the browser after the execution is green.",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Upload Form": {
+      "main": [[{ "node": "Prepare Upload", "type": "main", "index": 0 }]]
+    },
+    "Frontend Webhook": {
+      "main": [[{ "node": "Prepare Frontend Job", "type": "main", "index": 0 }]]
+    },
+    "Prepare Frontend Job": {
+      "main": [[{ "node": "2. Extract Audio", "type": "main", "index": 0 }]]
+    },
+    "Prepare Upload": {
+      "main": [[{ "node": "1. Upload Video", "type": "main", "index": 0 }]]
+    },
+    "1. Upload Video": {
+      "main": [[{ "node": "2. Extract Audio", "type": "main", "index": 0 }]]
+    },
+    "2. Extract Audio": {
+      "main": [[{ "node": "3. Speech to Text", "type": "main", "index": 0 }]]
+    },
+    "3. Speech to Text": {
+      "main": [[{ "node": "4. Translate", "type": "main", "index": 0 }]]
+    },
+    "4. Translate": {
+      "main": [[{ "node": "5. Generate Voice", "type": "main", "index": 0 }]]
+    },
+    "5. Generate Voice": {
+      "main": [[{ "node": "6. Mix and Synchronize", "type": "main", "index": 0 }]]
+    },
+    "6. Mix and Synchronize": {
+      "main": [[{ "node": "7. Render Video", "type": "main", "index": 0 }]]
+    },
+    "7. Render Video": {
+      "main": [[{ "node": "Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 21600,
+    "timezone": "Asia/Ho_Chi_Minh"
+  },
+  "tags": [],
+  "meta": { "instanceId": "simple-multilingual-dubbing" },
+  "versionId": "5690cc50-8daf-4c60-8da4-3e8cc2d76d20"
+}
