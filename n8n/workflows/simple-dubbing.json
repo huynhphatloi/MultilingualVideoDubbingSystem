@@ -150,7 +150,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [-180, 300],
-      "notes": "faster-whisper returns text with original start/end timestamps.",
+      "notes": "Calls Whisper on Google Colab and returns text with original start/end timestamps.",
       "notesInFlow": true
     },
     {
@@ -167,7 +167,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [40, 300],
-      "notes": "NLLB-200 translates all segments and writes translated.srt.",
+      "notes": "Calls NLLB-200 on Google Colab and writes translated.srt.",
       "notesInFlow": true
     },
     {
@@ -184,7 +184,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [260, 300],
-      "notes": "Calls the configured Google Colab /synthesize API. Without Colab, local MMS-TTS is the fallback.",
+      "notes": "Calls MMS-TTS on Google Colab. The workflow fails if Colab is unavailable; there is no local fallback.",
       "notesInFlow": true
     },
     {

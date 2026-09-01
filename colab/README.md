@@ -1,13 +1,16 @@
-# Google Colab TTS service
+# Google Colab AI service
 
-This folder is an application service, not a benchmark lab. It exposes one API:
+This folder is an application service, not a research or benchmark lab. It exposes:
 
 ```text
+POST /transcribe -> timestamped text
+POST /translate  -> translated text
 POST /synthesize -> audio/wav
 ```
 
-Open `tts_service.ipynb` in Google Colab, run all cells, then copy the printed
-`COLAB_TTS_URL` and `COLAB_TTS_TOKEN` values into the project's `.env` file.
+Open `ai_service.ipynb` in Google Colab, select a GPU runtime, and run all cells.
+Copy the printed `COLAB_API_URL`, `COLAB_API_TOKEN`, and `COLAB_API_TIMEOUT`
+values into the project's `.env` file.
 
-MMS-TTS provides the same 50 application languages shown in the frontend. The
-service keeps only one language model in GPU memory at a time.
+The service runs Whisper, NLLB-200, and MMS-TTS for the same 50 languages shown
+in the frontend. The local application has no model dependencies or fallback.

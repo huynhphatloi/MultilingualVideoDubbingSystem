@@ -12,7 +12,7 @@ start: ## Build and start n8n + the AI service, then import the workflow
 import: ## Re-import the workflow JSON after editing it
 	$(COMPOSE) exec n8n n8n import:workflow --input=/workflows/simple-dubbing.json
 
-stop: ## Stop containers but keep jobs, models, and n8n data
+stop: ## Stop containers but keep jobs and n8n data
 	$(COMPOSE) down
 
 logs: ## Follow both service logs
@@ -25,6 +25,6 @@ check: ## Offline syntax/configuration checks; does not download models
 	@python3 -c "import ast, pathlib; ast.parse(pathlib.Path('ai-service/app.py').read_text())"
 	@python3 -c "import ast, pathlib; ast.parse(pathlib.Path('colab/server.py').read_text())"
 	@python3 -m json.tool n8n/workflows/simple-dubbing.json >/dev/null
-	@python3 -m json.tool colab/tts_service.ipynb >/dev/null
+	@python3 -m json.tool colab/ai_service.ipynb >/dev/null
 	@$(COMPOSE) config --quiet
 	@echo "checks passed"

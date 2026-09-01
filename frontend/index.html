@@ -437,7 +437,7 @@
       </div>
       <p class="hero-copy">
         Translate speech and generate a synchronized voice-over in
-        <strong>50 languages</strong>. Use Google Colab GPU for faster MMS-TTS or run the same model locally.
+        <strong>50 languages</strong>. Whisper, translation, and speech generation run on Google Colab GPU.
       </p>
     </section>
 
@@ -502,9 +502,9 @@
         <div class="stages" id="stages">
           <div class="stage" data-stage="upload"><span class="stage-number">01</span><div><p class="stage-name">Upload video</p><p class="stage-tool">FastAPI storage</p></div><span class="stage-state">Waiting</span></div>
           <div class="stage" data-stage="extract"><span class="stage-number">02</span><div><p class="stage-name">Extract audio</p><p class="stage-tool">FFmpeg</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="transcribe"><span class="stage-number">03</span><div><p class="stage-name">Speech to text</p><p class="stage-tool">faster-whisper</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="translate"><span class="stage-number">04</span><div><p class="stage-name">Translate</p><p class="stage-tool">NLLB-200</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="synthesize"><span class="stage-number">05</span><div><p class="stage-name">Generate voice</p><p class="stage-tool">Google Colab TTS / MMS</p></div><span class="stage-state">Waiting</span></div>
+          <div class="stage" data-stage="transcribe"><span class="stage-number">03</span><div><p class="stage-name">Speech to text</p><p class="stage-tool">Colab / Whisper</p></div><span class="stage-state">Waiting</span></div>
+          <div class="stage" data-stage="translate"><span class="stage-number">04</span><div><p class="stage-name">Translate</p><p class="stage-tool">Colab / NLLB-200</p></div><span class="stage-state">Waiting</span></div>
+          <div class="stage" data-stage="synthesize"><span class="stage-number">05</span><div><p class="stage-name">Generate voice</p><p class="stage-tool">Colab / MMS-TTS</p></div><span class="stage-state">Waiting</span></div>
           <div class="stage" data-stage="mix"><span class="stage-number">06</span><div><p class="stage-name">Mix & synchronize</p><p class="stage-tool">FFmpeg timestamps</p></div><span class="stage-state">Waiting</span></div>
           <div class="stage" data-stage="render"><span class="stage-number">07</span><div><p class="stage-name">Render video</p><p class="stage-tool">MP4 + subtitles</p></div><span class="stage-state">Waiting</span></div>
         </div>
