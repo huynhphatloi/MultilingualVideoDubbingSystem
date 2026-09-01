@@ -6,16 +6,12 @@ services:
     environment:
       DATA_ROOT: /data/jobs
       PUBLIC_BASE_URL: http://localhost:8000
-      WHISPER_MODEL: ${WHISPER_MODEL:-small}
-      TRANSLATION_MODEL: facebook/nllb-200-distilled-600M
-      DEVICE: cpu
-      COLAB_TTS_URL: ${COLAB_TTS_URL:-}
-      COLAB_TTS_TOKEN: ${COLAB_TTS_TOKEN:-}
-      COLAB_TTS_TIMEOUT: ${COLAB_TTS_TIMEOUT:-300}
+      COLAB_API_URL: ${COLAB_API_URL:-}
+      COLAB_API_TOKEN: ${COLAB_API_TOKEN:-}
+      COLAB_API_TIMEOUT: ${COLAB_API_TIMEOUT:-1800}
       N8N_WEBHOOK_URL: http://n8n:5678/webhook/dubbing/start
     volumes:
       - job-data:/data/jobs
-      - model-cache:/models
     ports:
       - "8000:8000"
     healthcheck:
@@ -53,5 +49,4 @@ services:
 
 volumes:
   job-data:
-  model-cache:
   n8n-data:

@@ -2,11 +2,10 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    HF_HOME=/models/huggingface
+    PIP_NO_CACHE_DIR=1
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg libsndfile1 \
+ && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -16,9 +15,9 @@ RUN python -m pip install --upgrade pip \
 
 COPY ai-service/app.py ./app.py
 COPY frontend ./frontend
-RUN mkdir -p /data/jobs /models \
+RUN mkdir -p /data/jobs \
  && useradd -m -u 1000 app \
- && chown -R app:app /data /models /app
+ && chown -R app:app /data /app
 
 USER app
 EXPOSE 8000

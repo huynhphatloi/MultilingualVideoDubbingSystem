@@ -1,13 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
 httpx==0.28.1
-torch==2.11.0
-faster-whisper==1.2.1
-transformers==4.57.6
-sentencepiece==0.2.0
-numpy==2.2.6
-scipy==1.15.3
-soundfile==0.13.1
