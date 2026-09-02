@@ -59,6 +59,21 @@ LANGUAGES = {
 
 _JOB_ID = re.compile(r"^[a-f0-9]{12}$")
 _ALLOWED_VIDEO = {".mp4", ".mkv", ".mov", ".webm", ".m4v"}
+#: Whisper checkpoints the form may pick from. Bigger is slower but more
+#: accurate; the ".en" and "distil-" ones only understand English.
+_WHISPER_MODELS = {
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+    "medium", "medium.en", "large-v2", "large-v3", "large-v3-turbo",
+    "distil-small.en", "distil-medium.en", "distil-large-v3",
+}
+_DEFAULT_WHISPER_MODEL = "small"
+#: Translation models the Colab server keeps.
+_TRANSLATION_ENGINES = {"nllb", "seamless"}
+_DEFAULT_TRANSLATION_ENGINE = "nllb"
+#: TTS engines the Colab server registers. Only "mms" is installed by the
+#: notebook's base requirements; the rest need their own pip install there.
+_TTS_ENGINES = {"mms", "edge", "piper", "xtts_v2", "vixtts", "f5_vi", "f5_base"}
+_DEFAULT_TTS_ENGINE = "mms"
 app = FastAPI(title="Simple Multilingual Dubbing API", version="2.0")
 
 
@@ -104,7 +119,11 @@ def _stage(job_id: str, name: str) -> Iterator[tuple[dict, Path]]:
         job["status"] = "failed"
         job["error"] = {"stage": name, "message": str(message)[:1000]}
         _save_job(job)
-        raise
+        if isinstance(exc, HTTPException):
+            raise
+        # A bare exception reaches n8n as an empty "Internal Server Error", so
+        # the reason would only exist in job.json and the container log.
+        raise HTTPException(500, f"Stage '{name}' failed: {message}"[:1000]) from exc
     else:
         job.setdefault("completed_stages", []).append(name)
         job["current_stage"] = None
@@ -233,14 +252,38 @@ def upload_video(
     file: UploadFile = File(...),
     target_language: str = Form("vi"),
     source_language: str = Form("auto"),
+    model: str = Form(_DEFAULT_WHISPER_MODEL),
+    translation_engine: str = Form(_DEFAULT_TRANSLATION_ENGINE),
+    tts_engine: str = Form(_DEFAULT_TTS_ENGINE),
 ) -> dict:
     target = target_language.strip().lower()
     source = source_language.strip().lower()
     source = None if source in {"", "auto"} else source
+    whisper_model = model.strip().lower() or _DEFAULT_WHISPER_MODEL
+    mt_engine = translation_engine.strip().lower() or _DEFAULT_TRANSLATION_ENGINE
+    voice_engine = tts_engine.strip().lower() or _DEFAULT_TTS_ENGINE
     if target not in LANGUAGES:
         raise HTTPException(400, f"Unsupported target language '{target}'")
     if source and source not in LANGUAGES:
         raise HTTPException(400, f"Unsupported source language '{source}'")
+    if whisper_model not in _WHISPER_MODELS:
+        raise HTTPException(
+            400,
+            f"Unsupported Whisper model '{whisper_model}' "
+            f"(pick one of {sorted(_WHISPER_MODELS)})",
+        )
+    if mt_engine not in _TRANSLATION_ENGINES:
+        raise HTTPException(
+            400,
+            f"Unsupported translation engine '{mt_engine}' "
+            f"(pick one of {sorted(_TRANSLATION_ENGINES)})",
+        )
+    if voice_engine not in _TTS_ENGINES:
+        raise HTTPException(
+            400,
+            f"Unsupported voice engine '{voice_engine}' "
+            f"(pick one of {sorted(_TTS_ENGINES)})",
+        )
     suffix = Path(file.filename or "input.mp4").suffix.lower() or ".mp4"
     if suffix not in _ALLOWED_VIDEO:
         raise HTTPException(400, f"Unsupported video container '{suffix}'")
@@ -260,6 +303,9 @@ def upload_video(
         "source_filename": file.filename,
         "source_language": source,
         "target_language": target,
+        "whisper_model": whisper_model,
+        "translation_engine": mt_engine,
+        "tts_engine": voice_engine,
         "files": {"input": source_path.name},
         "segments": [],
     }
@@ -271,6 +317,9 @@ def upload_video(
         "stage": "upload",
         "status": "completed",
         "target_language": target,
+        "whisper_model": whisper_model,
+        "translation_engine": mt_engine,
+        "tts_engine": voice_engine,
     }
 
 
@@ -311,7 +360,7 @@ def transcribe(request: JobRequest) -> dict:
                     # forwards anything else straight to Whisper, which rejects
                     # the literal "auto" as an invalid language code.
                     "language": job.get("source_language") or "",
-                    "model": "small",
+                    "model": job.get("whisper_model") or _DEFAULT_WHISPER_MODEL,
                 },
             )
         try:
@@ -338,6 +387,7 @@ def transcribe(request: JobRequest) -> dict:
         "stage": "transcribe",
         "status": "completed",
         "source_language": job["source_language"],
+        "whisper_model": job.get("whisper_model") or _DEFAULT_WHISPER_MODEL,
         "segment_count": len(job["segments"]),
     }
 
@@ -359,6 +409,8 @@ def translate(request: JobRequest) -> dict:
                     "target_language": target,
                     "texts": texts,
                     "items": [{"text": text} for text in texts],
+                    "engine": job.get("translation_engine")
+                    or _DEFAULT_TRANSLATION_ENGINE,
                 },
             )
             try:
@@ -384,6 +436,8 @@ def translate(request: JobRequest) -> dict:
         "status": "completed",
         "source_language": source,
         "target_language": target,
+        "translation_engine": job.get("translation_engine")
+        or _DEFAULT_TRANSLATION_ENGINE,
         "segment_count": len(job["segments"]),
     }
 
@@ -392,15 +446,16 @@ def _colab_speech(
     text: str,
     language: str,
     output: Path,
+    engine: str = _DEFAULT_TTS_ENGINE,
 ) -> str:
-    # MMS is the non-cloning engine: it speaks every target language and needs
-    # no reference sample, unlike the Colab server's cloning default.
-    data = {"text": text, "language": language, "speed": "1.0", "engine": "mms"}
+    # The engine has to be named: the Colab server's own default is a cloning
+    # model, which refuses to speak without a reference sample.
+    data = {"text": text, "language": language, "speed": "1.0", "engine": engine}
     response = _colab_request("/synthesize", data=data)
     output.write_bytes(response.content)
     if not output.exists() or output.stat().st_size == 0:
         raise RuntimeError("Colab TTS returned an empty audio file")
-    return response.headers.get("x-tts-model") or "mms"
+    return response.headers.get("x-tts-model") or engine
 
 
 @app.post("/stages/synthesize")
@@ -409,13 +464,14 @@ def synthesize(request: JobRequest) -> dict:
         target = job["target_language"]
         output_dir = folder / "tts"
         output_dir.mkdir(exist_ok=True)
+        voice_engine = job.get("tts_engine") or _DEFAULT_TTS_ENGINE
         models: dict[str, int] = {}
         for segment in job["segments"]:
             text = (segment.get("translated_text") or "").strip()
             if not text:
                 continue
             output = output_dir / f"{segment['id']:04d}.wav"
-            model_name = _colab_speech(text, target, output)
+            model_name = _colab_speech(text, target, output, voice_engine)
             segment["tts_file"] = str(output.relative_to(folder))
             segment["tts_duration"] = round(_duration(output), 3)
             segment["tts_model"] = model_name
@@ -428,6 +484,7 @@ def synthesize(request: JobRequest) -> dict:
         "stage": "synthesize",
         "status": "completed",
         "generated_segments": generated,
+        "requested_engine": voice_engine,
         "provider": job["tts_provider"],
         "models_used": models,
     }
