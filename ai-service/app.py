@@ -142,6 +142,12 @@ def _colab_request(path: str, **kwargs):  # noqa: ANN003, ANN202
             "Google Colab AI service is not configured. Set COLAB_API_URL and "
             "COLAB_API_TOKEN in .env, then restart the stack.",
         )
+    if not COLAB_API_URL.startswith(("http://", "https://")):
+        raise HTTPException(
+            503,
+            "COLAB_API_URL must start with http:// or https://. Check that "
+            "COLAB_API_URL and COLAB_API_TOKEN were not swapped in .env.",
+        )
 
     import httpx
 
@@ -299,17 +305,27 @@ def transcribe(request: JobRequest) -> dict:
         with audio.open("rb") as stream:
             response = _colab_request(
                 "/transcribe",
-                files={"file": (audio.name, stream, "audio/wav")},
-                data={"language": job.get("source_language") or "auto"},
+                files={"audio": (audio.name, stream, "audio/wav")},
+                data={
+                    # An empty language means auto-detect. The Colab server
+                    # forwards anything else straight to Whisper, which rejects
+                    # the literal "auto" as an invalid language code.
+                    "language": job.get("source_language") or "",
+                    "model": "small",
+                },
             )
         try:
             payload = response.json()
-            segments = payload["segments"]
-            detected = payload["source_language"]
+            if not isinstance(payload, dict):
+                raise TypeError("response is not an object")
+            segments = payload.get("segments") or payload.get("windows")
+            detected = payload.get("source_language") or payload.get("language")
         except (ValueError, KeyError, TypeError) as exc:
             raise RuntimeError("Colab returned an invalid transcription response") from exc
-        if not segments:
+        if not isinstance(segments, list) or not segments:
             raise RuntimeError("Whisper found no speech in the video")
+        for index, segment in enumerate(segments):
+            segment["id"] = index
         if detected not in LANGUAGES:
             raise RuntimeError(f"Detected language '{detected}' is not configured")
         job["source_language"] = detected
@@ -342,10 +358,16 @@ def translate(request: JobRequest) -> dict:
                     "source_language": source,
                     "target_language": target,
                     "texts": texts,
+                    "items": [{"text": text} for text in texts],
                 },
             )
             try:
-                translations = response.json()["translations"]
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    raise TypeError("response is not an object")
+                translations = payload.get("translations")
+                if translations is None:
+                    translations = [item["text"] for item in payload["results"]]
             except (ValueError, KeyError, TypeError) as exc:
                 raise RuntimeError("Colab returned an invalid translation response") from exc
             if len(translations) != len(texts):
@@ -371,7 +393,9 @@ def _colab_speech(
     language: str,
     output: Path,
 ) -> str:
-    data = {"text": text, "language": language, "speed": "1.0"}
+    # MMS is the non-cloning engine: it speaks every target language and needs
+    # no reference sample, unlike the Colab server's cloning default.
+    data = {"text": text, "language": language, "speed": "1.0", "engine": "mms"}
     response = _colab_request("/synthesize", data=data)
     output.write_bytes(response.content)
     if not output.exists() or output.stat().st_size == 0:

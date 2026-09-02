@@ -163,19 +163,19 @@ def health() -> dict:
 
 @app.post("/transcribe")
 def transcribe(
-    file: UploadFile = File(...),
+    audio: UploadFile = File(...),
     language: str = Form("auto"),
     authorization: str | None = Header(None),
 ) -> dict:
     _authorize(authorization)
     requested = language.strip().lower()
     source = None if requested in {"", "auto"} else _validate_language(requested)
-    suffix = Path(file.filename or "audio.wav").suffix or ".wav"
+    suffix = Path(audio.filename or "audio.wav").suffix or ".wav"
 
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
-            shutil.copyfileobj(file.file, temporary)
+            shutil.copyfileobj(audio.file, temporary)
             temporary_path = temporary.name
         with _lock:
             raw_segments, info = _load_whisper().transcribe(
