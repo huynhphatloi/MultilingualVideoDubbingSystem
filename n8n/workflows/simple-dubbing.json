@@ -5,7 +5,7 @@
     {
       "parameters": {
         "formTitle": "Multilingual Video Dubbing",
-        "formDescription": "Upload a short video, then pick the languages and the three models to run it through. Keep this tab open: it shows the download links as soon as the seven stages finish. Only the 'mms' voice ships with the Colab notebook's base install - the others need their own pip install there.",
+        "formDescription": "Upload a short video and pick a target language. The three model fields are optional: left blank they use Whisper small, NLLB, and the mms voice, which are the only ones the Colab notebook installs by default.",
         "formFields": {
           "values": [
             {
@@ -250,7 +250,7 @@
                   }
                 ]
               },
-              "requiredField": true
+              "requiredField": false
             },
             {
               "fieldLabel": "Whisper Model",
@@ -301,7 +301,7 @@
                   }
                 ]
               },
-              "requiredField": true
+              "requiredField": false
             },
             {
               "fieldLabel": "Translation Engine",
@@ -316,7 +316,7 @@
                   }
                 ]
               },
-              "requiredField": true
+              "requiredField": false
             },
             {
               "fieldLabel": "Voice Engine",
@@ -346,11 +346,12 @@
                   }
                 ]
               },
-              "requiredField": true
+              "requiredField": false
             }
           ]
         },
-        "options": {}
+        "options": {},
+        "responseMode": "onReceived"
       },
       "id": "0bd18971-d5c4-4f07-8131-f84f8a377001",
       "name": "Upload Form",
