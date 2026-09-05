@@ -86,6 +86,11 @@ skipped and the pipeline continues, so one graph serves every configuration.
    token into `HF_TOKEN` if you want speaker diarization.
 3. Run all cells. The last one prints a ready-to-run command.
 
+The launch cell stops the previous server and reloads the checkout, so `Run all`
+is enough after pulling new code. A session started by an older copy of the
+notebook holds a server that cannot be stopped from the notebook — use
+**Runtime → Restart session** first.
+
 ### 2. Point the local stack at that session
 
 ```bash
@@ -529,12 +534,12 @@ dependency changes require a rebuild.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| UI shows **Backend out of date** | The Colab session predates the model registry | Re-run all cells, then `make colab URL=… TOKEN=…` |
+| UI shows **Backend out of date** | The Colab session is running an older build. Re-running the cells does not help on its own: `import` is a no-op in a live session, so the tunnel URL changes while the code does not | In Colab: **Runtime → Restart session**, then **Run all**. Then `make colab URL=… TOKEN=…`. `GET /health` reports the version actually answering |
 | UI shows **No AI backend** | The tunnel URL changed or the session stopped | `make backends`, then re-point with `make colab` |
 | `make start` reports auto-activation unavailable | The n8n CLI refused to activate | Open <http://localhost:5678>, open *Multilingual Dubbing*, save it, set it Active |
 | Upload rejected: *does not support target language* | The chosen engine has no such language | Pick another model; the error names working alternatives |
 | Upload rejected: *cannot detect the spoken language* | The recogniser has no language identification | Set **Original language** explicitly instead of Detect automatically |
-| `503` *needs the '…' package* | The engine's flag is off in the notebook | Enable it in cell 1, re-run the install cell, restart the API cell |
+| `503` *needs the '…' package* | The engine's flag is off in the notebook | Enable it in cell 1, re-run the install cell, then re-run the launch cell |
 | `503` *HF_TOKEN is not set* | pyannote's weights are gated | Accept the conditions on both pyannote model pages, paste a token into cell 1 |
 | Colab restarts the runtime after installing | Conflicting pins | Enable fewer engines — see [Dependency conflicts](#dependency-conflicts) |
 | Job fails at `synthesize` with *needs a reference sample* | Cloning is on but no reference survived | Re-run the job; avoid running several multi-speaker jobs at once |

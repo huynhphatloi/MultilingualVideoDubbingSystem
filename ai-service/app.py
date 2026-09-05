@@ -79,6 +79,11 @@ _REFERENCE_SECONDS = 12.0
 _REFERENCE_MINIMUM = 1.0
 _MAX_REFERENCE_PIECE = 8.0
 
+#: Endpoints introduced with AI service 4.0. A 404 on one of these means the
+#: notebook session is running an older build, not that the request was wrong.
+MODERN_ENDPOINTS = ("/capabilities", "/validate", "/diarize", "/separate", "/align")
+MIN_BACKEND_VERSION = "4.0"
+
 #: The stages n8n calls, in order. Optional ones skip themselves.
 STAGES = [
     "extract",
@@ -97,6 +102,13 @@ STAGES = [
 FINAL_STAGE = "render"
 
 app = FastAPI(title="Multilingual Dubbing API", version="3.0")
+
+
+class OutdatedBackend(HTTPException):
+    """The notebook session answers, but predates the model registry."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(502, detail)
 
 
 class JobRequest(BaseModel):
@@ -221,6 +233,38 @@ def _misconfigured_backends() -> List[str]:
     return broken
 
 
+def _backend_version(url: str, token: str) -> Optional[str]:
+    """The AI service version a session reports, or None if it reports none."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        payload = httpx.get(
+            f"{url}/health", headers=headers, timeout=BACKEND_PROBE_TIMEOUT
+        ).json()
+    except (httpx.RequestError, ValueError):
+        return None
+    version = payload.get("version") if isinstance(payload, dict) else None
+    return str(version) if version else None
+
+
+def _outdated_message(name: str, url: str, token: str, path: str) -> str:
+    """Why an alive backend cannot serve this request, and what to do about it.
+
+    Saying "re-run all cells" is not enough: in a session that is already
+    running, `import` is a no-op and the previous server keeps answering, so the
+    tunnel URL changes while the code does not. That is the state this message
+    usually finds, and it is why the restart is spelled out.
+    """
+    seen = _backend_version(url, token)
+    return (
+        f"The '{name}' session at {url} is running AI service "
+        f"{seen or 'a build older than ' + MIN_BACKEND_VERSION}, which has no "
+        f"{path} endpoint. This stack needs {MIN_BACKEND_VERSION} or newer. "
+        f"In Colab: Runtime > Restart session, then Run all - re-running the "
+        f"cells without a restart keeps the old code loaded. Then point this "
+        f"stack at the new tunnel with: make colab URL=<url> TOKEN=<token>"
+    )
+
+
 def _probe_backend(url: str, token: str) -> bool:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
@@ -312,6 +356,8 @@ def _colab_request(path: str, method: str = "POST", **kwargs):  # noqa: ANN003, 
                 f"AI backend '{name}' became unreachable: {str(exc)[:300]}. "
                 f"{_backend_problem()}",
             ) from exc
+        if response.status_code == 404 and path in MODERN_ENDPOINTS:
+            raise OutdatedBackend(_outdated_message(name, url, token, path))
         if response.status_code >= 400:
             raise HTTPException(
                 502,
@@ -434,23 +480,12 @@ def capabilities() -> dict:
     try:
         payload = dict(_capabilities())
     except HTTPException as exc:
-        detail = str(exc.detail)
-        reason = "error"
-        if "404" in detail:
-            reason = "outdated"
-            # The session answers /health but has no registry: it is running a
-            # build from before the provider refactor. Say so, because "no
-            # backend" is the one thing this is not.
-            detail = (
-                f"The '{backend[0]}' session at {backend[1]} is alive but has no "
-                f"/capabilities endpoint, so it is running an older build of the "
-                f"notebook. Re-run all cells in colab/ai_service.ipynb to pick up "
-                f"the model registry, then point .env at the new tunnel URL."
-            )
+        # An outdated session is not an absent one, and the fix is different:
+        # _colab_request has already built the message that says which.
         return {
             "available": False,
-            "reason": reason,
-            "hint": detail,
+            "reason": "outdated" if isinstance(exc, OutdatedBackend) else "error",
+            "hint": str(exc.detail),
             "languages": [{"code": code, "name": name} for code, name in LANGUAGES.items()],
             "providers": {},
             "stages": STAGES,

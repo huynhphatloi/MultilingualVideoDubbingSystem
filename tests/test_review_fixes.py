@@ -194,3 +194,66 @@ class TestSharedMixing:
             assert "loudnorm" not in source, f"{path.name} builds its own blend"
             assert "adelay=" not in source, f"{path.name} builds its own dub track"
             assert "atempo=" not in source, f"{path.name} chains its own atempo"
+
+
+class TestOutdatedBackend:
+    """An alive session running old code must be named as such, everywhere.
+
+    The first version of this diagnostic lived only on /capabilities and told
+    the operator to "re-run all cells" - which cannot work, because `import` is
+    a no-op in a running session and the previous server keeps answering on the
+    fresh tunnel URL.
+    """
+
+    def service(self, monkeypatch, status=404, health=None):  # noqa: ANN201
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai-service"))
+        import app
+
+        class Response:
+            status_code = status
+            text = "Not Found"
+
+            def json(self):  # noqa: ANN201
+                return {"detail": "Not Found"}
+
+        monkeypatch.setattr(app, "_resolve_backend",
+                            lambda force=False: ("colab", "https://x.example", ""))
+        monkeypatch.setattr(app.httpx, "request", lambda *a, **k: Response())
+        monkeypatch.setattr(app, "_backend_version", lambda url, token: health)
+        monkeypatch.setattr(app, "_capabilities_cache", None)
+        return app
+
+    def test_every_new_endpoint_reports_the_version_and_the_restart(self, monkeypatch):
+        app = self.service(monkeypatch, health="3.0")
+        for path in app.MODERN_ENDPOINTS:
+            with pytest.raises(app.OutdatedBackend) as failure:
+                app._colab_request(path, json={})
+            message = str(failure.value.detail)
+            assert "running AI service 3.0" in message
+            assert path in message
+            assert "Restart session" in message
+            assert "make colab" in message
+
+    def test_a_session_reporting_no_version_is_described_honestly(self, monkeypatch):
+        app = self.service(monkeypatch, health=None)
+        with pytest.raises(app.OutdatedBackend) as failure:
+            app._colab_request("/validate", json={})
+        assert "a build older than 4.0" in str(failure.value.detail)
+
+    def test_capabilities_labels_it_outdated_rather_than_offline(self, monkeypatch):
+        app = self.service(monkeypatch, health="3.0")
+        payload = app.capabilities()
+        assert payload["available"] is False
+        assert payload["reason"] == "outdated"
+        assert "Restart session" in payload["hint"]
+        # The UI still gets enough to render itself.
+        assert payload["languages"] and payload["stages"]
+
+    def test_an_ordinary_error_is_not_blamed_on_the_version(self, monkeypatch):
+        app = self.service(monkeypatch, status=500)
+        with pytest.raises(Exception) as failure:
+            app._colab_request("/validate", json={})
+        assert not isinstance(failure.value, app.OutdatedBackend)
