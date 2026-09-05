@@ -12,11 +12,13 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -27,6 +29,19 @@ ROOT.mkdir(parents=True, exist_ok=True)
 COLAB_API_URL = os.getenv("COLAB_API_URL", "").rstrip("/")
 COLAB_API_TOKEN = os.getenv("COLAB_API_TOKEN", "")
 COLAB_API_TIMEOUT = float(os.getenv("COLAB_API_TIMEOUT", "1800"))
+#: Notebook backends to try, most preferred first. Each name NAME reads
+#: NAME_API_URL and NAME_API_TOKEN, so the original COLAB_* pair still works
+#: untouched. Neither Colab nor Kaggle can be started from here - both need a
+#: human to press Run - so this picks a session that is already alive rather
+#: than provisioning one.
+AI_BACKENDS = [
+    name.strip().lower()
+    for name in os.getenv("AI_BACKENDS", "colab,kaggle").split(",")
+    if name.strip()
+]
+#: Re-probing on every segment would add a round trip per TTS call.
+BACKEND_PROBE_TTL = float(os.getenv("BACKEND_PROBE_TTL", "30"))
+BACKEND_PROBE_TIMEOUT = float(os.getenv("BACKEND_PROBE_TIMEOUT", "10"))
 N8N_WEBHOOK_URL = os.getenv(
     "N8N_WEBHOOK_URL", "http://n8n:5678/webhook/dubbing/start"
 )
@@ -74,6 +89,11 @@ _DEFAULT_TRANSLATION_ENGINE = "nllb"
 #: notebook's base requirements; the rest need their own pip install there.
 _TTS_ENGINES = {"mms", "edge", "piper", "xtts_v2", "vixtts", "f5_vi", "f5_base"}
 _DEFAULT_TTS_ENGINE = "mms"
+#: These clone a speaker instead of using a stock voice, so they refuse to
+#: speak until a reference sample of that speaker is uploaded to Colab.
+_CLONING_ENGINES = {"xtts_v2", "vixtts", "f5_vi", "f5_base"}
+#: Cloning quality plateaus well before this; longer clips only cost upload time.
+_REFERENCE_SECONDS = 12.0
 app = FastAPI(title="Simple Multilingual Dubbing API", version="2.0")
 
 
@@ -153,45 +173,128 @@ def _duration(path: Path) -> float:
     return float(result.stdout.strip())
 
 
-def _colab_request(path: str, **kwargs):  # noqa: ANN003, ANN202
-    """Call the mandatory Colab AI service without any local fallback."""
-    if not COLAB_API_URL:
-        raise HTTPException(
-            503,
-            "Google Colab AI service is not configured. Set COLAB_API_URL and "
-            "COLAB_API_TOKEN in .env, then restart the stack.",
-        )
-    if not COLAB_API_URL.startswith(("http://", "https://")):
-        raise HTTPException(
-            503,
-            "COLAB_API_URL must start with http:// or https://. Check that "
-            "COLAB_API_URL and COLAB_API_TOKEN were not swapped in .env.",
-        )
+#: The backend that answered most recently, plus when it was checked.
+_live_backend: tuple[str, str, str] | None = None
+_live_checked = 0.0
 
-    import httpx
 
-    headers = kwargs.pop("headers", {})
-    if COLAB_API_TOKEN:
-        headers["Authorization"] = f"Bearer {COLAB_API_TOKEN}"
+def _configured_backends() -> list[tuple[str, str, str]]:
+    """Return (name, url, token) for every backend with a usable URL."""
+    backends = []
+    for name in AI_BACKENDS:
+        url = os.getenv(f"{name.upper()}_API_URL", "").strip().rstrip("/")
+        if url.startswith(("http://", "https://")):
+            backends.append((name, url, os.getenv(f"{name.upper()}_API_TOKEN", "")))
+    return backends
+
+
+def _misconfigured_backends() -> list[str]:
+    """Names whose URL is set but unusable, the classic URL/token swap."""
+    broken = []
+    for name in AI_BACKENDS:
+        url = os.getenv(f"{name.upper()}_API_URL", "").strip()
+        if url and not url.startswith(("http://", "https://")):
+            broken.append(name)
+    return broken
+
+
+def _probe_backend(url: str, token: str) -> bool:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
-        response = httpx.post(
-            f"{COLAB_API_URL}{path}",
-            headers=headers,
-            timeout=COLAB_API_TIMEOUT,
-            **kwargs,
+        response = httpx.get(
+            f"{url}/health", headers=headers, timeout=BACKEND_PROBE_TIMEOUT
         )
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            503,
-            f"Google Colab AI service is unreachable: {str(exc)[:500]}",
-        ) from exc
-    if response.status_code >= 400:
-        raise HTTPException(
-            502,
-            f"Google Colab AI service returned {response.status_code}: "
-            f"{response.text[:500]}",
+    except httpx.RequestError:
+        return False
+    return response.status_code < 400
+
+
+def _invalidate_backend() -> None:
+    global _live_backend, _live_checked
+    _live_backend = None
+    _live_checked = 0.0
+
+
+def _resolve_backend(force: bool = False) -> tuple[str, str, str] | None:
+    """Pick the first configured backend that answers /health."""
+    global _live_backend, _live_checked
+    now = time.monotonic()
+    if not force and _live_backend and now - _live_checked < BACKEND_PROBE_TTL:
+        return _live_backend
+    for backend in _configured_backends():
+        if _probe_backend(backend[1], backend[2]):
+            _live_backend = backend
+            _live_checked = now
+            return backend
+    _live_backend = None
+    _live_checked = now
+    return None
+
+
+def _backend_problem() -> str:
+    """One message explaining why no notebook answered, and what to do."""
+    configured = _configured_backends()
+    broken = _misconfigured_backends()
+    if broken:
+        names = ", ".join(f"{name.upper()}_API_URL" for name in broken)
+        return (
+            f"{names} must start with http:// or https://. Check that the URL "
+            f"and token were not swapped in .env."
         )
-    return response
+    if not configured:
+        names = " or ".join(f"{name.upper()}_API_URL" for name in AI_BACKENDS)
+        return (
+            f"No AI backend is configured. Set {names} plus the matching "
+            f"_API_TOKEN in .env, then run 'make restart'."
+        )
+    listed = ", ".join(f"{name} ({url})" for name, url, _ in configured)
+    return (
+        f"No configured AI backend answered /health: {listed}. Open the "
+        f"notebook, run all cells, and put the printed URL in .env. A notebook "
+        f"session cannot be started from here."
+    )
+
+
+def _colab_request(path: str, **kwargs):  # noqa: ANN003, ANN202
+    """Call whichever notebook backend is alive. There is no local fallback."""
+    backend = _resolve_backend()
+    if backend is None:
+        raise HTTPException(503, _backend_problem())
+
+    # An upload stream cannot be replayed once a failed attempt has consumed
+    # it, so only bodies we can rebuild are safe to retry elsewhere.
+    repeatable = "files" not in kwargs
+    attempted: list[str] = []
+    while True:
+        name, url, token = backend
+        attempted.append(name)
+        headers = dict(kwargs.get("headers") or {})
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            response = httpx.post(
+                f"{url}{path}",
+                timeout=COLAB_API_TIMEOUT,
+                **{**kwargs, "headers": headers},
+            )
+        except httpx.RequestError as exc:
+            _invalidate_backend()
+            following = _resolve_backend(force=True) if repeatable else None
+            if following is not None and following[0] not in attempted:
+                backend = following
+                continue
+            raise HTTPException(
+                503,
+                f"AI backend '{name}' became unreachable: {str(exc)[:300]}. "
+                f"{_backend_problem()}",
+            ) from exc
+        if response.status_code >= 400:
+            raise HTTPException(
+                502,
+                f"AI backend '{name}' returned {response.status_code}: "
+                f"{response.text[:500]}",
+            )
+        return response
 
 
 def _srt_timestamp(seconds: float) -> str:
@@ -226,14 +329,43 @@ def demo_frontend():  # noqa: ANN201
 
 @app.get("/health")
 def health() -> dict:
+    # Cheap: reports the cached probe rather than dialling every backend.
+    backend = _resolve_backend()
     return {
         "status": "ready",
         "version": "2.0",
         "jobs_root": str(ROOT),
         "languages": len(LANGUAGES),
-        "ai_backend": "google-colab",
+        "ai_backend": backend[0] if backend else None,
+        "ai_backend_url": backend[1] if backend else None,
         "colab_configured": bool(COLAB_API_URL),
         "local_models": False,
+    }
+
+
+@app.get("/backends")
+def backends() -> dict:
+    """Which notebook sessions are alive right now, in preference order.
+
+    Neither Colab nor Kaggle can be started from here, so this reports what is
+    already running instead of trying to bring a session up.
+    """
+    configured = _configured_backends()
+    live = _resolve_backend(force=True)
+    return {
+        "order": AI_BACKENDS,
+        "backends": [
+            {
+                "name": name,
+                "url": url,
+                "token": bool(token),
+                "alive": _probe_backend(url, token),
+                "active": bool(live) and live[0] == name,
+            }
+            for name, url, token in configured
+        ],
+        "active": live[0] if live else None,
+        "hint": None if live else _backend_problem(),
     }
 
 
@@ -442,15 +574,57 @@ def translate(request: JobRequest) -> dict:
     }
 
 
+def _build_reference(folder: Path, job: dict) -> Path:
+    """Cut a sample of the original speaker for the cloning engines.
+
+    Taken from the first transcribed segment onwards, so the clip is known to
+    hold speech rather than whatever silence or music opens the video.
+    """
+    original = folder / job["files"]["original_audio"]
+    segments = job["segments"]
+    if not segments:
+        raise RuntimeError("A voice reference needs the transcript, which is empty")
+    start = float(segments[0]["start"])
+    span = float(segments[-1]["end"]) - start
+    if span < 1.0:
+        raise RuntimeError(
+            "The video holds less than a second of speech, too little to clone a voice"
+        )
+    reference = folder / "reference.wav"
+    _run([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-ss", f"{start:.3f}", "-t", f"{min(_REFERENCE_SECONDS, span):.3f}",
+        "-i", str(original),
+        "-vn", "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", str(reference),
+    ])
+    return reference
+
+
+def _upload_reference(reference: Path) -> str:
+    """Send the sample once per job; segments then cite it by id."""
+    with reference.open("rb") as stream:
+        response = _colab_request(
+            "/reference", files={"audio": (reference.name, stream, "audio/wav")}
+        )
+    try:
+        reference_id = response.json()["reference_id"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("Colab returned no reference_id for the voice sample") from exc
+    return reference_id
+
+
 def _colab_speech(
     text: str,
     language: str,
     output: Path,
     engine: str = _DEFAULT_TTS_ENGINE,
+    reference_id: str = "",
 ) -> str:
     # The engine has to be named: the Colab server's own default is a cloning
     # model, which refuses to speak without a reference sample.
     data = {"text": text, "language": language, "speed": "1.0", "engine": engine}
+    if reference_id:
+        data["reference_id"] = reference_id
     response = _colab_request("/synthesize", data=data)
     output.write_bytes(response.content)
     if not output.exists() or output.stat().st_size == 0:
@@ -465,13 +639,20 @@ def synthesize(request: JobRequest) -> dict:
         output_dir = folder / "tts"
         output_dir.mkdir(exist_ok=True)
         voice_engine = job.get("tts_engine") or _DEFAULT_TTS_ENGINE
+        reference_id = ""
+        if voice_engine in _CLONING_ENGINES:
+            reference = _build_reference(folder, job)
+            job["files"]["reference"] = reference.name
+            reference_id = _upload_reference(reference)
         models: dict[str, int] = {}
         for segment in job["segments"]:
             text = (segment.get("translated_text") or "").strip()
             if not text:
                 continue
             output = output_dir / f"{segment['id']:04d}.wav"
-            model_name = _colab_speech(text, target, output, voice_engine)
+            model_name = _colab_speech(
+                text, target, output, voice_engine, reference_id
+            )
             segment["tts_file"] = str(output.relative_to(folder))
             segment["tts_duration"] = round(_duration(output), 3)
             segment["tts_model"] = model_name
@@ -485,6 +666,7 @@ def synthesize(request: JobRequest) -> dict:
         "status": "completed",
         "generated_segments": generated,
         "requested_engine": voice_engine,
+        "voice_reference": bool(reference_id),
         "provider": job["tts_provider"],
         "models_used": models,
     }

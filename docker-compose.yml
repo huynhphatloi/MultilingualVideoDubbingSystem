@@ -6,12 +6,19 @@ services:
     environment:
       DATA_ROOT: /data/jobs
       PUBLIC_BASE_URL: http://localhost:8000
+      AI_BACKENDS: ${AI_BACKENDS:-colab,kaggle}
       COLAB_API_URL: ${COLAB_API_URL:-}
       COLAB_API_TOKEN: ${COLAB_API_TOKEN:-}
+      KAGGLE_API_URL: ${KAGGLE_API_URL:-}
+      KAGGLE_API_TOKEN: ${KAGGLE_API_TOKEN:-}
       COLAB_API_TIMEOUT: ${COLAB_API_TIMEOUT:-1800}
       N8N_WEBHOOK_URL: http://n8n:5678/webhook/dubbing/start
     volumes:
       - job-data:/data/jobs
+      # Edit without rebuilding: frontend/index.html is re-read on every
+      # request, app.py needs `make restart`.
+      - ./frontend:/app/frontend:ro
+      - ./ai-service/app.py:/app/app.py:ro
     ports:
       - "8000:8000"
     healthcheck:
@@ -31,6 +38,7 @@ services:
       N8N_PROTOCOL: http
       WEBHOOK_URL: http://localhost:5678/
       GENERIC_TIMEZONE: Asia/Ho_Chi_Minh
+      N8N_USER_MANAGEMENT_DISABLED: "true"
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
       N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
