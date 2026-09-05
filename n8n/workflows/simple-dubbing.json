@@ -5,7 +5,7 @@
     {
       "parameters": {
         "formTitle": "Multilingual Video Dubbing",
-        "formDescription": "Upload a short video and pick a target language. The three model fields are optional: left blank they use Whisper small, NLLB, and the mms voice, which are the only ones the Colab notebook installs by default.",
+        "formDescription": "Upload a short video and pick a target language. Every model field is optional: left blank the job uses Whisper small, NLLB-200 and the mms voice, which are the only ones the notebook installs by default. GET /capabilities on the AI service lists what the running session can actually load.",
         "formFields": {
           "values": [
             {
@@ -253,63 +253,51 @@
               "requiredField": false
             },
             {
-              "fieldLabel": "Whisper Model",
+              "fieldLabel": "Speech Recognition Model",
               "fieldType": "dropdown",
               "fieldOptions": {
                 "values": [
                   {
-                    "option": "small - balanced, the default"
+                    "option": "small - Whisper, the default: fast and multilingual"
                   },
                   {
-                    "option": "tiny - fastest, roughest"
+                    "option": "large-v3-turbo - Whisper, best quality for its speed"
                   },
                   {
-                    "option": "base - fast"
+                    "option": "large-v3 - Whisper, best quality"
                   },
                   {
-                    "option": "medium - slower, more accurate"
+                    "option": "medium - Whisper, a middle ground"
                   },
                   {
-                    "option": "large-v2 - previous flagship"
+                    "option": "distil-large-v3 - Whisper distilled, English only"
                   },
                   {
-                    "option": "large-v3 - best quality, slowest"
+                    "option": "seamless_asr - SeamlessM4T, no timestamps of its own"
                   },
                   {
-                    "option": "large-v3-turbo - near large-v3, much faster"
+                    "option": "mms_asr - Meta MMS, needs an explicit source language"
                   },
                   {
-                    "option": "distil-large-v3 - English only, very fast"
+                    "option": "sensevoice_small - SenseVoice, Chinese/English/Japanese/Korean"
                   },
                   {
-                    "option": "medium.en - English only, accurate"
-                  },
-                  {
-                    "option": "small.en - English only, fast"
-                  },
-                  {
-                    "option": "base.en - English only, fast"
-                  },
-                  {
-                    "option": "tiny.en - English only, fastest"
-                  },
-                  {
-                    "option": "distil-medium.en - English only, fast"
-                  },
-                  {
-                    "option": "distil-small.en - English only, fastest"
+                    "option": "parakeet_tdt_0.6b_v3 - NVIDIA Parakeet, European languages"
                   }
                 ]
               },
               "requiredField": false
             },
             {
-              "fieldLabel": "Translation Engine",
+              "fieldLabel": "Translation Model",
               "fieldType": "dropdown",
               "fieldOptions": {
                 "values": [
                   {
-                    "option": "nllb - NLLB-200 distilled 600M, the default"
+                    "option": "nllb - NLLB-200 600M, the default"
+                  },
+                  {
+                    "option": "nllb_1.3b - NLLB-200 1.3B, better and slower"
                   },
                   {
                     "option": "seamless - SeamlessM4T medium"
@@ -319,30 +307,123 @@
               "requiredField": false
             },
             {
-              "fieldLabel": "Voice Engine",
+              "fieldLabel": "Voice Model",
               "fieldType": "dropdown",
               "fieldOptions": {
                 "values": [
                   {
-                    "option": "mms - every language, plain voice, always installed"
+                    "option": "mms - MMS-TTS, the default: 34 languages, stock voice"
                   },
                   {
-                    "option": "edge - most natural, needs edge-tts on Colab"
+                    "option": "edge - Microsoft Edge voices, most natural, needs internet"
                   },
                   {
-                    "option": "piper - fast, 12 languages, needs piper-tts on Colab"
+                    "option": "piper - Piper, fast local voices"
                   },
                   {
-                    "option": "xtts_v2 - cloning, 17 languages, no Vietnamese, needs coqui-tts"
+                    "option": "xtts_v2 - XTTS v2 cloning, 17 languages, no Vietnamese"
                   },
                   {
-                    "option": "vixtts - Vietnamese cloning, needs coqui-tts on Colab"
+                    "option": "vixtts - viXTTS cloning, Vietnamese only"
                   },
                   {
-                    "option": "f5_vi - Vietnamese flow-matching, needs f5-tts on Colab"
+                    "option": "f5_vi - F5-TTS cloning, Vietnamese only"
                   },
                   {
-                    "option": "f5_base - English and Chinese, needs f5-tts on Colab"
+                    "option": "f5_base - F5-TTS cloning, English and Chinese"
+                  },
+                  {
+                    "option": "chatterbox - Chatterbox cloning, 23 languages, no Vietnamese"
+                  },
+                  {
+                    "option": "kokoro - Kokoro, 8 languages, stock voice"
+                  },
+                  {
+                    "option": "openvoice_v2 - OpenVoice V2 cloning, 6 languages"
+                  },
+                  {
+                    "option": "cosyvoice2 - CosyVoice 2 cloning, 9 languages"
+                  },
+                  {
+                    "option": "vieneu - VieNeu-TTS cloning, Vietnamese only"
+                  }
+                ]
+              },
+              "requiredField": false
+            },
+            {
+              "fieldLabel": "Speaker Diarization",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Off - one voice for the whole video"
+                  },
+                  {
+                    "option": "On - one voice per speaker (needs pyannote and an HF token)"
+                  }
+                ]
+              },
+              "requiredField": false
+            },
+            {
+              "fieldLabel": "Voice Cloning",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Automatic - on for engines that only speak in a cloned voice"
+                  },
+                  {
+                    "option": "On - clone each speaker (the engine must support it)"
+                  },
+                  {
+                    "option": "Off - use the engine's stock voice"
+                  }
+                ]
+              },
+              "requiredField": false
+            },
+            {
+              "fieldLabel": "Duration Alignment",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "On - fit each line into its own time window"
+                  },
+                  {
+                    "option": "Off - leave every generated line at its natural length"
+                  }
+                ]
+              },
+              "requiredField": false
+            },
+            {
+              "fieldLabel": "Source Separation",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Off - keep the original track quiet underneath"
+                  },
+                  {
+                    "option": "On - dub over the separated background (needs demucs)"
+                  }
+                ]
+              },
+              "requiredField": false
+            },
+            {
+              "fieldLabel": "Lip Sync",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Off - keep the original video"
+                  },
+                  {
+                    "option": "On - needs a lip-sync provider, which this build does not ship"
                   }
                 ]
               },
@@ -401,7 +482,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'large-v3 - best quality'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst chosenSource = String(form.json['Source Language'] || '');\n\nreturn [{\n  json: {\n    target_language: codeOf(form.json['Target Language'], 'vi'),\n    source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n    model: firstWord(form.json['Whisper Model'], 'small'),\n    translation_engine: firstWord(form.json['Translation Engine'], 'nllb'),\n    tts_engine: firstWord(form.json['Voice Engine'], 'mms')\n  },\n  binary: { video: form.binary[keys[0]] }\n}];"
+        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'large-v3 - best quality'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst flag = (label, fallback) => {\n  const word = firstWord(label, '').toLowerCase();\n  if (word === 'on') return 'true';\n  if (word === 'off') return 'false';\n  return fallback;\n};\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// Only the model fields the operator actually chose are sent. Anything left\n// blank falls through to the AI service's own default, so the form never has\n// to know what that default is.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  asr_model: firstWord(form.json['Speech Recognition Model'], ''),\n  translation_model: firstWord(form.json['Translation Model'], ''),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n  enable_diarization: flag(form.json['Speaker Diarization'], 'false'),\n  enable_alignment: flag(form.json['Duration Alignment'], 'true'),\n  enable_source_separation: flag(form.json['Source Separation'], 'false'),\n  enable_lip_sync: flag(form.json['Lip Sync'], 'false'),\n};\n\n// 'Automatic' means: let the AI service decide from the engine's own\n// reference_required flag, which is what omitting the field does.\nconst cloning = flag(form.json['Voice Cloning'], '');\nif (cloning) payload.enable_voice_cloning = cloning;\n\n// The legacy names are still accepted by the API; the new ones are clearer.\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
       },
       "id": "0bd18971-d5c4-4f07-8131-f84f8a377002",
       "name": "Prepare Upload",
@@ -429,23 +510,43 @@
             },
             {
               "name": "target_language",
-              "value": "={{ $json.target_language }}"
+              "value": "={{ $json.target_language || '' }}"
             },
             {
               "name": "source_language",
-              "value": "={{ $json.source_language }}"
+              "value": "={{ $json.source_language || '' }}"
             },
             {
-              "name": "model",
-              "value": "={{ $json.model }}"
+              "name": "asr_model",
+              "value": "={{ $json.asr_model || '' }}"
             },
             {
-              "name": "translation_engine",
-              "value": "={{ $json.translation_engine }}"
+              "name": "translation_model",
+              "value": "={{ $json.translation_model || '' }}"
             },
             {
-              "name": "tts_engine",
-              "value": "={{ $json.tts_engine }}"
+              "name": "tts_model",
+              "value": "={{ $json.tts_model || '' }}"
+            },
+            {
+              "name": "enable_diarization",
+              "value": "={{ $json.enable_diarization || '' }}"
+            },
+            {
+              "name": "enable_voice_cloning",
+              "value": "={{ $json.enable_voice_cloning || '' }}"
+            },
+            {
+              "name": "enable_alignment",
+              "value": "={{ $json.enable_alignment || '' }}"
+            },
+            {
+              "name": "enable_source_separation",
+              "value": "={{ $json.enable_source_separation || '' }}"
+            },
+            {
+              "name": "enable_lip_sync",
+              "value": "={{ $json.enable_lip_sync || '' }}"
             }
           ]
         },
@@ -472,10 +573,10 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
         "options": {
-          "timeout": 1800000
+          "timeout": 7200000
         }
       },
-      "id": "0bd18971-d5c4-4f07-8131-f84f8a377004",
+      "id": "stage-extract",
       "name": "2. Extract Audio",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -483,7 +584,29 @@
         -400,
         300
       ],
-      "notes": "FFmpeg creates a 16 kHz ASR file and a 48 kHz soundtrack file.",
+      "notes": "FFmpeg writes a 16 kHz mono file for the models and a 48 kHz soundtrack for the mix.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/diarize",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "stage-diarize",
+      "name": "3. Speaker Diarization",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        300
+      ],
+      "notes": "Optional. pyannote on the AI backend returns speaker turns; skipped when the job did not ask for it.",
       "notesInFlow": true
     },
     {
@@ -497,15 +620,37 @@
           "timeout": 7200000
         }
       },
-      "id": "0bd18971-d5c4-4f07-8131-f84f8a377005",
-      "name": "3. Speech to Text",
+      "id": "stage-transcribe",
+      "name": "4. Speech Recognition",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -180,
+        40,
         300
       ],
-      "notes": "Calls Whisper on Google Colab and returns text with original start/end timestamps.",
+      "notes": "The chosen ASR model on the AI backend. Recognisers without timestamps are given the diarization turns as windows.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/merge_segments",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "stage-merge_segments",
+      "name": "5. Merge Speakers + Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        300
+      ],
+      "notes": "Local: each segment takes the speaker it overlaps most. No model involved.",
       "notesInFlow": true
     },
     {
@@ -519,15 +664,37 @@
           "timeout": 7200000
         }
       },
-      "id": "0bd18971-d5c4-4f07-8131-f84f8a377006",
-      "name": "4. Translate",
+      "id": "stage-translate",
+      "name": "6. Translate",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        40,
+        480,
         300
       ],
-      "notes": "Calls NLLB-200 on Google Colab and writes translated.srt.",
+      "notes": "The chosen translation model on the AI backend. Skipped when source and target match.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/voice_references",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "stage-voice_references",
+      "name": "7. Voice References",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "notes": "Optional. Cuts one clean clip per speaker and uploads it, so cloning keeps each voice distinct.",
       "notesInFlow": true
     },
     {
@@ -538,18 +705,62 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
         "options": {
-          "timeout": 10800000
+          "timeout": 7200000
         }
       },
-      "id": "0bd18971-d5c4-4f07-8131-f84f8a377007",
-      "name": "5. Generate Voice",
+      "id": "stage-synthesize",
+      "name": "8. Generate Voice",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        260,
+        920,
         300
       ],
-      "notes": "Calls MMS-TTS on Google Colab. The workflow fails if Colab is unavailable; there is no local fallback.",
+      "notes": "The chosen TTS model on the AI backend, one call per segment with that speaker's reference.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/align",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "stage-align",
+      "name": "9. Align Speech",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -400,
+        520
+      ],
+      "notes": "Optional. Local FFmpeg fits each line into its own time window, within the configured speed limits.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/separate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "stage-separate",
+      "name": "10. Source Separation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        520
+      ],
+      "notes": "Optional. Demucs on the AI backend returns the background stem so the dub is not laid over the original voice.",
       "notesInFlow": true
     },
     {
@@ -560,18 +771,40 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
         "options": {
-          "timeout": 3600000
+          "timeout": 7200000
         }
       },
-      "id": "0bd18971-d5c4-4f07-8131-f84f8a377008",
-      "name": "6. Mix and Synchronize",
+      "id": "stage-mix",
+      "name": "11. Mix Audio",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
-        300
+        40,
+        520
       ],
-      "notes": "Places each voice at its Whisper timestamp and lowers the original soundtrack.",
+      "notes": "Local FFmpeg places every clip at its timestamp and mixes it with the background.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ai-service:8000/stages/lipsync",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "stage-lipsync",
+      "name": "12. Lip Sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        520
+      ],
+      "notes": "Optional. No lip-sync provider ships with this build, so this reports skipped unless one is added.",
       "notesInFlow": true
     },
     {
@@ -582,18 +815,18 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
         "options": {
-          "timeout": 3600000
+          "timeout": 7200000
         }
       },
-      "id": "0bd18971-d5c4-4f07-8131-f84f8a377009",
-      "name": "7. Render Video",
+      "id": "stage-render",
+      "name": "13. Render Video",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        700,
-        300
+        480,
+        520
       ],
-      "notes": "Muxes the new audio and translated soft subtitles into MP4.",
+      "notes": "Local FFmpeg muxes the dubbed audio and the subtitles back onto the video.",
       "notesInFlow": true
     },
     {
@@ -602,69 +835,87 @@
         "assignments": {
           "assignments": [
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021001",
+              "id": "c44192f2-a601-4a2c-8572-e27800000001",
               "name": "job_id",
               "value": "={{ $json.job_id }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021002",
+              "id": "c44192f2-a601-4a2c-8572-e27800000002",
               "name": "status",
               "value": "completed",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021003",
+              "id": "c44192f2-a601-4a2c-8572-e27800000003",
               "name": "download_video",
               "value": "={{ $json.output_url }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021004",
+              "id": "c44192f2-a601-4a2c-8572-e27800000004",
               "name": "download_subtitle",
               "value": "={{ $json.subtitle_url }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021005",
+              "id": "c44192f2-a601-4a2c-8572-e27800000005",
               "name": "source_language",
-              "value": "={{ $('4. Translate').first().json.source_language }}",
+              "value": "={{ $('6. Translate').first().json.source_language }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021006",
+              "id": "c44192f2-a601-4a2c-8572-e27800000006",
               "name": "target_language",
-              "value": "={{ $('4. Translate').first().json.target_language }}",
+              "value": "={{ $('6. Translate').first().json.target_language }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021007",
-              "name": "whisper_model",
-              "value": "={{ $('3. Speech to Text').first().json.whisper_model }}",
+              "id": "c44192f2-a601-4a2c-8572-e27800000007",
+              "name": "asr_model",
+              "value": "={{ $('4. Speech Recognition').first().json.asr_model }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021008",
+              "id": "c44192f2-a601-4a2c-8572-e27800000008",
               "name": "segments",
-              "value": "={{ $('4. Translate').first().json.segment_count }}",
+              "value": "={{ $('6. Translate').first().json.segment_count }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021009",
+              "id": "c44192f2-a601-4a2c-8572-e27800000009",
               "name": "translation_engine",
-              "value": "={{ $('4. Translate').first().json.translation_engine }}",
+              "value": "={{ $('6. Translate').first().json.translation_engine }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021010",
+              "id": "c44192f2-a601-4a2c-8572-e27800000010",
               "name": "voice_engine",
-              "value": "={{ $('5. Generate Voice').first().json.requested_engine }}",
+              "value": "={{ $('8. Generate Voice').first().json.requested_engine }}",
               "type": "string"
             },
             {
-              "id": "c44192f2-a601-4a2c-8572-e278b6021011",
+              "id": "c44192f2-a601-4a2c-8572-e27800000011",
               "name": "voice_used",
-              "value": "={{ Object.keys($('5. Generate Voice').first().json.models_used || {}).join(', ') }}",
+              "value": "={{ Object.keys($('8. Generate Voice').first().json.models_used || {}).join(', ') }}",
+              "type": "string"
+            },
+            {
+              "id": "c44192f2-a601-4a2c-8572-e27800000012",
+              "name": "speakers",
+              "value": "={{ ($('5. Merge Speakers + Transcript').first().json.speakers || []).join(', ') }}",
+              "type": "string"
+            },
+            {
+              "id": "c44192f2-a601-4a2c-8572-e27800000013",
+              "name": "alignment",
+              "value": "={{ JSON.stringify($('9. Align Speech').first().json.alignment || {}) }}",
+              "type": "string"
+            },
+            {
+              "id": "c44192f2-a601-4a2c-8572-e27800000014",
+              "name": "mix_mode",
+              "value": "={{ $('11. Mix Audio').first().json.mode }}",
               "type": "string"
             }
           ]
@@ -676,8 +927,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        920,
-        300
+        700,
+        520
       ],
       "notes": "Open these URLs in the browser after the execution is green.",
       "notesInFlow": true
@@ -712,8 +963,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1140,
-        300
+        920,
+        520
       ],
       "notes": "The frontend app polls for itself, so only form runs get the ending page.",
       "notesInFlow": true
@@ -722,7 +973,7 @@
       "parameters": {
         "operation": "completion",
         "respondWith": "showText",
-        "responseText": "=<h2>Your dubbed video is ready</h2>\n<p>Job <code>{{ $json.job_id }}</code> &mdash; {{ $json.source_language }} to {{ $json.target_language }}, {{ $json.segments }} segments.</p>\n<ul>\n<li>Transcribed with Whisper <b>{{ $json.whisper_model }}</b></li>\n<li>Translated with <b>{{ $json.translation_engine }}</b></li>\n<li>Voiced by <b>{{ $json.voice_used || $json.voice_engine }}</b></li>\n</ul>\n<ul>\n<li><a href=\"{{ $json.download_video }}\" target=\"_blank\" rel=\"noopener\">Download the dubbed video (MP4, subtitles included)</a></li>\n<li><a href=\"{{ $json.download_subtitle }}\" target=\"_blank\" rel=\"noopener\">Download the translated subtitles (SRT)</a></li>\n</ul>\n<p>Both links keep working while the stack is up. The job folder is <code>data/jobs/{{ $json.job_id }}</code>.</p>",
+        "responseText": "=<h2>Your dubbed video is ready</h2>\n<p>Job <code>{{ $json.job_id }}</code> &mdash; {{ $json.source_language }} to {{ $json.target_language }}, {{ $json.segments }} segments, speakers: {{ $json.speakers || 'SPEAKER_00' }}.</p>\n<ul>\n<li>Recognised with <b>{{ $json.asr_model }}</b></li>\n<li>Translated with <b>{{ $json.translation_engine }}</b></li>\n<li>Voiced by <b>{{ $json.voice_used || $json.voice_engine }}</b></li>\n<li>Mixed as <b>{{ $json.mix_mode }}</b>, alignment {{ $json.alignment }}</li>\n</ul>\n<ul>\n<li><a href=\"{{ $json.download_video }}\" target=\"_blank\" rel=\"noopener\">Download the dubbed video (MP4, subtitles included)</a></li>\n<li><a href=\"{{ $json.download_subtitle }}\" target=\"_blank\" rel=\"noopener\">Download the translated subtitles (SRT)</a></li>\n</ul>\n<p>Both links keep working while the stack is up. The job folder is <code>data/jobs/{{ $json.job_id }}</code>.</p>",
         "limitWaitTime": false,
         "options": {}
       },
@@ -731,8 +982,8 @@
       "type": "n8n-nodes-base.form",
       "typeVersion": 1,
       "position": [
-        1360,
-        200
+        1140,
+        420
       ],
       "webhookId": "ee71780b-5bb5-4460-9fe4-604b12862002",
       "notes": "Replaces the form with the download links once stage 7 is done.",
@@ -799,58 +1050,124 @@
       "main": [
         [
           {
-            "node": "3. Speech to Text",
+            "node": "3. Speaker Diarization",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "3. Speech to Text": {
+    "3. Speaker Diarization": {
       "main": [
         [
           {
-            "node": "4. Translate",
+            "node": "4. Speech Recognition",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "4. Translate": {
+    "4. Speech Recognition": {
       "main": [
         [
           {
-            "node": "5. Generate Voice",
+            "node": "5. Merge Speakers + Transcript",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "5. Generate Voice": {
+    "5. Merge Speakers + Transcript": {
       "main": [
         [
           {
-            "node": "6. Mix and Synchronize",
+            "node": "6. Translate",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "6. Mix and Synchronize": {
+    "6. Translate": {
       "main": [
         [
           {
-            "node": "7. Render Video",
+            "node": "7. Voice References",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "7. Render Video": {
+    "7. Voice References": {
+      "main": [
+        [
+          {
+            "node": "8. Generate Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8. Generate Voice": {
+      "main": [
+        [
+          {
+            "node": "9. Align Speech",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9. Align Speech": {
+      "main": [
+        [
+          {
+            "node": "10. Source Separation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10. Source Separation": {
+      "main": [
+        [
+          {
+            "node": "11. Mix Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11. Mix Audio": {
+      "main": [
+        [
+          {
+            "node": "12. Lip Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12. Lip Sync": {
+      "main": [
+        [
+          {
+            "node": "13. Render Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13. Render Video": {
       "main": [
         [
           {

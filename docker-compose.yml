@@ -19,6 +19,7 @@ services:
       # request, app.py needs `make restart`.
       - ./frontend:/app/frontend:ro
       - ./ai-service/app.py:/app/app.py:ro
+      - ./dubflow_core:/app/dubflow_core:ro
     ports:
       - "8000:8000"
     healthcheck:

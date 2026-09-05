@@ -1,6 +1,18 @@
+# Base install for the Colab AI service.
+#
+# Deliberately small: it covers the HTTP layer, the job pipeline, and the
+# providers that need nothing extra - every Whisper checkpoint, SeamlessM4T and
+# MMS recognition, NLLB and SeamlessM4T translation, and the MMS voice.
+# Everything else is an optional package with a flag in the notebook's first
+# cell, because several of them pin their own torch or transformers.
+#
+# torch is not pinned here: Colab ships a build matched to its own CUDA, and
+# replacing it is the fastest way to break a session.
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
+# Also supplies the Silero VAD used to window recognisers that have no
+# timestamps of their own, so no extra dependency is needed for that.
 faster-whisper==1.2.1
 transformers==4.57.6
 sentencepiece==0.2.0

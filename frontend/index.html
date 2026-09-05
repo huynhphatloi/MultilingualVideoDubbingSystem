@@ -418,15 +418,93 @@
       .workspace { border-radius: 14px; }
       footer { flex-direction: column; }
     }
-  </style>
+  
+    /* ---- model and feature controls -------------------------------- */
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 24px 0 12px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .section-title::after {
+      flex: 1;
+      height: 1px;
+      background: var(--line);
+      content: "";
+    }
+
+    .field-note {
+      display: block;
+      margin-top: 6px;
+      min-height: 14px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .field-note.warn { color: var(--error); }
+
+    select:disabled { color: #9aa39d; background: #f2f1ec; cursor: not-allowed; }
+
+    .options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 16px;
+      margin-top: 14px;
+    }
+
+    .option {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fbfaf5;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .option input { margin: 2px 0 0; accent-color: var(--teal); }
+    .option.disabled { opacity: 0.55; }
+    .option-name { display: block; font-weight: 720; }
+    .option-hint { display: block; color: var(--muted); font-size: 10.5px; }
+
+    .banner {
+      display: none;
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      border: 1px solid #e4c98f;
+      border-radius: 9px;
+      background: #fdf6e6;
+      color: #7a5a12;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .banner.show { display: block; }
+
+    .stage.skipped { opacity: 0.5; }
+    .stage.skipped .stage-state { color: #6f7c75; }
+
+    @media (max-width: 580px) {
+      .options { grid-template-columns: 1fr; }
+    }
+</style>
 </head>
 <body>
   <div class="shell">
     <header>
       <div class="brand"><span class="brand-mark">DF</span> DubFlow</div>
       <nav aria-label="Project links">
-        <a class="nav-link" href="http://localhost:5678" target="_blank" rel="noreferrer">n8n pipeline ↗</a>
-        <a class="nav-link" href="/docs" target="_blank" rel="noreferrer">API docs ↗</a>
+        <a class="nav-link" href="http://localhost:5678" target="_blank" rel="noreferrer">n8n pipeline &#8599;</a>
+        <a class="nav-link" href="/docs" target="_blank" rel="noreferrer">API docs &#8599;</a>
       </nav>
     </header>
 
@@ -437,7 +515,8 @@
       </div>
       <p class="hero-copy">
         Translate speech and generate a synchronized voice-over in
-        <strong>50 languages</strong>. Whisper, translation, and speech generation run on Google Colab GPU.
+        <strong>50 languages</strong>. Every model below is offered by the
+        running Colab session, which reports what it can actually load.
       </p>
     </section>
 
@@ -448,16 +527,18 @@
             <p class="panel-kicker">Create a job</p>
             <h2>Dub your video</h2>
           </div>
-          <span class="badge">Short clips work best</span>
+          <span class="badge" id="backend-badge">Checking backend</span>
         </div>
+
+        <div class="banner" id="banner" role="status"></div>
 
         <form id="dubbing-form">
           <label class="dropzone" id="dropzone" for="video-file">
             <input id="video-file" name="file" type="file" accept=".mp4,.mkv,.mov,.webm,.m4v,video/*" required>
             <span>
-              <span class="upload-icon">＋</span>
+              <span class="upload-icon">&#65291;</span>
               <span class="drop-title">Drop a video here or click to browse</span>
-              <span class="drop-hint">MP4, MKV, MOV or WebM · Use 10–20 seconds for the first demo</span>
+              <span class="drop-hint">MP4, MKV, MOV or WebM &middot; Use 10&ndash;20 seconds for the first demo</span>
               <span class="file-name" id="file-name"></span>
             </span>
           </label>
@@ -468,17 +549,89 @@
               <select id="source-language" name="source_language">
                 <option value="auto">Detect automatically</option>
               </select>
+              <span class="field-note" id="source-note"></span>
             </div>
             <div class="field">
               <label for="target-language">Dub into</label>
               <select id="target-language" name="target_language" required>
                 <option value="vi">Vietnamese</option>
               </select>
+              <span class="field-note" id="target-note"></span>
             </div>
           </div>
 
+          <p class="section-title">Models</p>
+          <div class="form-grid" style="margin-top:0">
+            <div class="field">
+              <label for="asr-provider">Speech recognition provider</label>
+              <select id="asr-provider" name="asr_provider"></select>
+            </div>
+            <div class="field">
+              <label for="asr-model">Speech recognition model</label>
+              <select id="asr-model" name="asr_model"></select>
+              <span class="field-note" id="asr-note"></span>
+            </div>
+            <div class="field">
+              <label for="translation-provider">Translation provider</label>
+              <select id="translation-provider" name="translation_provider"></select>
+            </div>
+            <div class="field">
+              <label for="translation-model">Translation model</label>
+              <select id="translation-model" name="translation_model"></select>
+              <span class="field-note" id="translation-note"></span>
+            </div>
+            <div class="field">
+              <label for="tts-provider">Voice provider</label>
+              <select id="tts-provider" name="tts_provider"></select>
+            </div>
+            <div class="field">
+              <label for="tts-model">Voice model</label>
+              <select id="tts-model" name="tts_model"></select>
+              <span class="field-note" id="tts-note"></span>
+            </div>
+          </div>
+
+          <p class="section-title">Pipeline options</p>
+          <div class="options">
+            <label class="option" id="option-diarization">
+              <input type="checkbox" id="enable-diarization">
+              <span>
+                <span class="option-name">Speaker diarization</span>
+                <span class="option-hint" id="hint-diarization">One voice per speaker</span>
+              </span>
+            </label>
+            <label class="option" id="option-cloning">
+              <input type="checkbox" id="enable-voice-cloning">
+              <span>
+                <span class="option-name">Voice cloning</span>
+                <span class="option-hint" id="hint-cloning">Keep the original speaker's voice</span>
+              </span>
+            </label>
+            <label class="option" id="option-alignment">
+              <input type="checkbox" id="enable-alignment" checked>
+              <span>
+                <span class="option-name">Duration alignment</span>
+                <span class="option-hint" id="hint-alignment">Fit each line into its own time window</span>
+              </span>
+            </label>
+            <label class="option" id="option-separation">
+              <input type="checkbox" id="enable-source-separation">
+              <span>
+                <span class="option-name">Source separation</span>
+                <span class="option-hint" id="hint-separation">Dub over the real background, not a quiet original</span>
+              </span>
+            </label>
+            <label class="option" id="option-lipsync">
+              <input type="checkbox" id="enable-lip-sync">
+              <span>
+                <span class="option-name">Lip sync</span>
+                <span class="option-hint" id="hint-lipsync">No provider installed</span>
+              </span>
+            </label>
+          </div>
+
           <button class="submit" id="submit-button" type="submit">
-            <span id="submit-label">Start dubbing</span><span class="submit-arrow">→</span>
+            <span id="submit-label">Start dubbing</span><span class="submit-arrow">&rarr;</span>
           </button>
           <div class="message" id="message" role="status"></div>
         </form>
@@ -488,7 +641,7 @@
         <div class="panel-head">
           <div>
             <p class="panel-kicker">Live execution</p>
-            <h2>Seven-stage pipeline</h2>
+            <h2>Thirteen-stage pipeline</h2>
           </div>
           <span class="badge" id="status-badge">Ready</span>
         </div>
@@ -499,15 +652,7 @@
         </div>
         <div class="progress-track" aria-hidden="true"><div class="progress-bar" id="progress-bar"></div></div>
 
-        <div class="stages" id="stages">
-          <div class="stage" data-stage="upload"><span class="stage-number">01</span><div><p class="stage-name">Upload video</p><p class="stage-tool">FastAPI storage</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="extract"><span class="stage-number">02</span><div><p class="stage-name">Extract audio</p><p class="stage-tool">FFmpeg</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="transcribe"><span class="stage-number">03</span><div><p class="stage-name">Speech to text</p><p class="stage-tool">Colab / Whisper</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="translate"><span class="stage-number">04</span><div><p class="stage-name">Translate</p><p class="stage-tool">Colab / NLLB-200</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="synthesize"><span class="stage-number">05</span><div><p class="stage-name">Generate voice</p><p class="stage-tool">Colab / MMS-TTS</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="mix"><span class="stage-number">06</span><div><p class="stage-name">Mix & synchronize</p><p class="stage-tool">FFmpeg timestamps</p></div><span class="stage-state">Waiting</span></div>
-          <div class="stage" data-stage="render"><span class="stage-number">07</span><div><p class="stage-name">Render video</p><p class="stage-tool">MP4 + subtitles</p></div><span class="stage-state">Waiting</span></div>
-        </div>
+        <div class="stages" id="stages"></div>
 
         <div class="result" id="result">
           <video id="result-video" controls preload="metadata"></video>
@@ -520,13 +665,31 @@
     </main>
 
     <footer>
-      <span>Simple architecture: static UI + FastAPI + n8n + optional Google Colab.</span>
+      <span>Static UI + FastAPI + n8n + a notebook AI service behind one model registry.</span>
       <span>Need workflow details? <a href="http://localhost:5678" target="_blank" rel="noreferrer">Open n8n</a></span>
     </footer>
   </div>
 
   <script>
-    const stages = ["upload", "extract", "transcribe", "translate", "synthesize", "mix", "render"];
+    // The stage list mirrors the local API's STAGES, plus the upload step the
+    // browser performs itself. Optional stages report themselves as skipped
+    // rather than silently disappearing.
+    const STAGES = [
+      { id: "upload", name: "Upload video", tool: "FastAPI storage" },
+      { id: "extract", name: "Extract audio", tool: "FFmpeg" },
+      { id: "diarize", name: "Speaker diarization", tool: "pyannote", optional: true },
+      { id: "transcribe", name: "Speech recognition", tool: "ASR model" },
+      { id: "merge_segments", name: "Merge speakers + transcript", tool: "Time overlap" },
+      { id: "translate", name: "Translate", tool: "Translation model" },
+      { id: "voice_references", name: "Voice references", tool: "Per-speaker samples", optional: true },
+      { id: "synthesize", name: "Generate voice", tool: "TTS model" },
+      { id: "align", name: "Align speech", tool: "Duration fitting", optional: true },
+      { id: "separate", name: "Source separation", tool: "Demucs", optional: true },
+      { id: "mix", name: "Mix and synchronize", tool: "FFmpeg timestamps" },
+      { id: "lipsync", name: "Lip sync", tool: "Optional provider", optional: true },
+      { id: "render", name: "Render video", tool: "MP4 + subtitles" }
+    ];
+
     const form = document.getElementById("dubbing-form");
     const fileInput = document.getElementById("video-file");
     const dropzone = document.getElementById("dropzone");
@@ -536,12 +699,42 @@
     const submitButton = document.getElementById("submit-button");
     const submitLabel = document.getElementById("submit-label");
     const message = document.getElementById("message");
+    const banner = document.getElementById("banner");
+    const backendBadge = document.getElementById("backend-badge");
     const statusBadge = document.getElementById("status-badge");
     const jobStatus = document.getElementById("job-status");
     const jobIdLabel = document.getElementById("job-id");
     const progressBar = document.getElementById("progress-bar");
     const result = document.getElementById("result");
     const resultVideo = document.getElementById("result-video");
+    const stagesRoot = document.getElementById("stages");
+
+    const controls = {
+      asr: {
+        provider: document.getElementById("asr-provider"),
+        model: document.getElementById("asr-model"),
+        note: document.getElementById("asr-note")
+      },
+      translation: {
+        provider: document.getElementById("translation-provider"),
+        model: document.getElementById("translation-model"),
+        note: document.getElementById("translation-note")
+      },
+      tts: {
+        provider: document.getElementById("tts-provider"),
+        model: document.getElementById("tts-model"),
+        note: document.getElementById("tts-note")
+      }
+    };
+    const toggles = {
+      diarization: document.getElementById("enable-diarization"),
+      voice_cloning: document.getElementById("enable-voice-cloning"),
+      alignment: document.getElementById("enable-alignment"),
+      source_separation: document.getElementById("enable-source-separation"),
+      lip_sync: document.getElementById("enable-lip-sync")
+    };
+
+    let capabilities = null;
     let pollTimer = null;
 
     function showMessage(text, tone = "") {
@@ -549,9 +742,26 @@
       message.className = `message show ${tone}`.trim();
     }
 
+    function showBanner(text) {
+      banner.textContent = text || "";
+      banner.className = text ? "banner show" : "banner";
+    }
+
     function setBusy(busy, label = "Start dubbing") {
       submitButton.disabled = busy;
       submitLabel.textContent = label;
+    }
+
+    function renderStageList() {
+      stagesRoot.innerHTML = STAGES.map((stage, index) => `
+        <div class="stage" data-stage="${stage.id}">
+          <span class="stage-number">${String(index + 1).padStart(2, "0")}</span>
+          <div>
+            <p class="stage-name">${stage.name}</p>
+            <p class="stage-tool">${stage.tool}${stage.optional ? " &middot; optional" : ""}</p>
+          </div>
+          <span class="stage-state">Waiting</span>
+        </div>`).join("");
     }
 
     function updateFile(file) {
@@ -588,30 +798,232 @@
       return payload;
     }
 
-    async function loadLanguages() {
-      try {
-        const payload = await readJson(await fetch("/languages"));
-        const languages = payload.languages.sort((a, b) => a.name.localeCompare(b.name));
-        sourceSelect.innerHTML = '<option value="auto">Detect automatically</option>';
-        targetSelect.innerHTML = "";
-        for (const language of languages) {
-          const sourceOption = new Option(`${language.name} (${language.code})`, language.code);
-          const targetOption = new Option(`${language.name} (${language.code})`, language.code);
-          sourceSelect.add(sourceOption);
-          targetSelect.add(targetOption);
+    // ---- capabilities -------------------------------------------------
+    function modelsOf(task) {
+      const groups = (capabilities && capabilities.providers && capabilities.providers[task]) || [];
+      return groups.flatMap(group => group.models.map(model => ({ ...model, group })));
+    }
+
+    function speaks(model, language) {
+      if (!language || !model.languages || !model.languages.length) return true;
+      return model.languages.includes(language);
+    }
+
+    function eligible(task) {
+      const target = targetSelect.value;
+      const source = sourceSelect.value === "auto" ? null : sourceSelect.value;
+      return modelsOf(task).filter(model => {
+        if (!model.available) return false;
+        if (task === "asr") {
+          if (!source && !model.supports_language_detection) return false;
+          return speaks(model, source);
         }
-        targetSelect.value = "vi";
-      } catch (error) {
-        showMessage(`Could not load languages: ${error.message}`, "error");
+        if (task === "translation") {
+          return speaks(model, target) && (!source || speaks(model, source));
+        }
+        return speaks(model, target);
+      });
+    }
+
+    function describe(model) {
+      const parts = [];
+      if (model.experimental) parts.push("experimental");
+      if (model.license && model.license !== "unknown") parts.push(model.license);
+      if (model.task === "tts") {
+        parts.push(model.supports_voice_cloning ? "clones voices" : "stock voice");
+      }
+      if (model.task === "asr" && !model.supports_timestamps) {
+        parts.push("windowed timing");
+      }
+      const head = parts.length ? parts.join(" · ") : "";
+      return model.notes ? `${head}${head ? " — " : ""}${model.notes}` : head;
+    }
+
+    function fillSelector(task, keepModel) {
+      const control = controls[task];
+      const models = eligible(task);
+      // Keep the operator's choice; fall back to the backend's own default so a
+      // fresh page opens on the model the API would have picked anyway.
+      const fallback = (capabilities && capabilities.defaults || {})[task];
+      const previous = keepModel || control.model.value || fallback || "";
+
+      const providers = [];
+      for (const model of models) {
+        if (!providers.some(entry => entry.id === model.group.id)) {
+          providers.push({ id: model.group.id, name: model.group.display_name });
+        }
+      }
+      const defaultProvider = (models.find(model => model.id === fallback) || {}).provider;
+      const wantedProvider = providers.some(entry => entry.id === control.provider.value)
+        ? control.provider.value
+        : (defaultProvider || (providers[0] || {}).id);
+
+      control.provider.innerHTML = "";
+      for (const provider of providers) {
+        control.provider.add(new Option(provider.name, provider.id));
+      }
+      control.provider.value = wantedProvider || "";
+      control.provider.disabled = providers.length === 0;
+
+      const forProvider = models.filter(model => model.provider === control.provider.value);
+      control.model.innerHTML = "";
+      for (const model of forProvider) {
+        control.model.add(new Option(model.display_name, model.id));
+      }
+      if (forProvider.some(model => model.id === previous)) control.model.value = previous;
+      control.model.disabled = forProvider.length === 0;
+
+      if (!models.length) {
+        control.note.className = "field-note warn";
+        control.note.textContent = capabilities && capabilities.available
+          ? "No installed model covers this language pair. Install one in the notebook, or choose another language."
+          : "";
+      } else {
+        control.note.className = "field-note";
+        const chosen = forProvider.find(model => model.id === control.model.value);
+        control.note.textContent = chosen ? describe(chosen) : "";
+      }
+      return forProvider.find(model => model.id === control.model.value) || null;
+    }
+
+    function optionState(name, enabled, hint, checked) {
+      const box = toggles[name];
+      const wrapper = box.closest(".option");
+      box.disabled = !enabled;
+      wrapper.classList.toggle("disabled", !enabled);
+      if (typeof checked === "boolean") box.checked = checked;
+      if (!enabled) box.checked = false;
+      const hintNode = wrapper.querySelector(".option-hint");
+      if (hint) hintNode.textContent = hint;
+    }
+
+    function refreshOptions(ttsModel) {
+      const diarization = modelsOf("diarization").filter(model => model.available);
+      optionState(
+        "diarization",
+        diarization.length > 0,
+        diarization.length
+          ? "One voice per speaker"
+          : "pyannote is not installed on this backend"
+      );
+
+      if (!ttsModel) {
+        optionState("voice_cloning", false, "Pick a voice model first");
+      } else if (!ttsModel.supports_voice_cloning) {
+        optionState("voice_cloning", false, `${ttsModel.display_name} uses a stock voice`, false);
+      } else if (ttsModel.reference_required) {
+        optionState("voice_cloning", false, `${ttsModel.display_name} only speaks in a cloned voice`, true);
+        toggles.voice_cloning.checked = true;
+      } else {
+        optionState("voice_cloning", true, "Keep the original speaker's voice");
+      }
+
+      const separation = modelsOf("separation").filter(model => model.available);
+      optionState(
+        "source_separation",
+        separation.length > 0,
+        separation.length
+          ? "Dub over the real background, not a quiet original"
+          : "Demucs is not installed on this backend"
+      );
+
+      const lipsync = modelsOf("lipsync").filter(model => model.available);
+      optionState(
+        "lip_sync",
+        lipsync.length > 0,
+        lipsync.length ? "Re-time the mouth to the dub" : "No provider installed"
+      );
+    }
+
+    function refreshAll() {
+      const asrModel = fillSelector("asr");
+      const translationModel = fillSelector("translation");
+      const ttsModel = fillSelector("tts");
+      refreshOptions(ttsModel);
+
+      // Explain what "detect automatically" costs: the recognisers that load one
+      // language at a time are hidden while it is selected, rather than being
+      // offered and then failing.
+      const sourceNote = document.getElementById("source-note");
+      const shown = new Set(eligible("asr").map(model => model.provider));
+      const hidden = [];
+      for (const model of modelsOf("asr")) {
+        if (!model.available || shown.has(model.provider)) continue;
+        if (!hidden.includes(model.group.display_name)) hidden.push(model.group.display_name);
+      }
+      sourceNote.className = "field-note";
+      sourceNote.textContent = (sourceSelect.value === "auto" && hidden.length)
+        ? `Naming the language also unlocks ${hidden.join(", ")}, which load one language at a time.`
+        : "";
+
+      const targetNote = document.getElementById("target-note");
+      const missing = [];
+      if (!asrModel) missing.push("speech recognition");
+      if (!translationModel) missing.push("translation");
+      if (!ttsModel) missing.push("a voice");
+      const blocked = missing.length > 0;
+      if (blocked && capabilities && capabilities.available) {
+        targetNote.className = "field-note warn";
+        targetNote.textContent = `No installed model provides ${missing.join(" or ")} for this pair.`;
+      } else {
+        targetNote.className = "field-note";
+        targetNote.textContent = "";
+      }
+      if (capabilities && capabilities.available) {
+        submitButton.disabled = blocked;
+        submitLabel.textContent = blocked ? "No usable model" : "Start dubbing";
       }
     }
 
-    function resetStages() {
-      for (const stageName of stages) {
-        const element = document.querySelector(`[data-stage="${stageName}"]`);
-        element.className = "stage";
-        element.querySelector(".stage-state").textContent = "Waiting";
+    for (const task of Object.keys(controls)) {
+      controls[task].provider.addEventListener("change", () => {
+        controls[task].model.value = "";
+        refreshAll();
+      });
+      controls[task].model.addEventListener("change", () => refreshAll());
+    }
+    sourceSelect.addEventListener("change", () => refreshAll());
+    targetSelect.addEventListener("change", () => refreshAll());
+
+    function fillLanguages(languages) {
+      const sorted = [...languages].sort((a, b) => a.name.localeCompare(b.name));
+      sourceSelect.innerHTML = '<option value="auto">Detect automatically</option>';
+      targetSelect.innerHTML = "";
+      for (const language of sorted) {
+        sourceSelect.add(new Option(`${language.name} (${language.code})`, language.code));
+        targetSelect.add(new Option(`${language.name} (${language.code})`, language.code));
       }
+      targetSelect.value = sorted.some(language => language.code === "vi") ? "vi" : sorted[0].code;
+    }
+
+    async function loadCapabilities() {
+      try {
+        capabilities = await readJson(await fetch("/capabilities"));
+      } catch (error) {
+        capabilities = { available: false, hint: error.message, providers: {}, languages: [] };
+      }
+      fillLanguages(capabilities.languages && capabilities.languages.length
+        ? capabilities.languages
+        : [{ code: "vi", name: "Vietnamese" }]);
+
+      if (!capabilities.available) {
+        // An outdated session is not an absent one, and the fix is different.
+        const outdated = capabilities.reason === "outdated";
+        backendBadge.textContent = outdated ? "Backend out of date" : "No AI backend";
+        showBanner(capabilities.hint || "No AI backend is answering. Start the notebook and point .env at it.");
+        setBusy(true, outdated ? "Re-run the notebook" : "AI backend offline");
+        submitButton.disabled = true;
+      } else {
+        backendBadge.textContent = `Backend: ${capabilities.ai_backend || "ready"} · ${capabilities.device || "cpu"}`;
+        showBanner("");
+        submitButton.disabled = false;
+      }
+      refreshAll();
+    }
+
+    // ---- job progress --------------------------------------------------
+    function resetStages() {
+      renderStageList();
       progressBar.style.width = "0%";
       result.classList.remove("show");
       resultVideo.removeAttribute("src");
@@ -619,19 +1031,27 @@
 
     function renderJob(job) {
       const complete = new Set(job.completed_stages || []);
-      const failedStage = job.status === "failed" ? job.error?.stage : null;
+      const skipped = new Set(job.skipped_stages || []);
+      const failedStage = job.status === "failed" ? (job.error || {}).stage : null;
+      let counted = 0;
 
-      for (const stageName of stages) {
-        const element = document.querySelector(`[data-stage="${stageName}"]`);
+      for (const stage of STAGES) {
+        const element = document.querySelector(`[data-stage="${stage.id}"]`);
+        if (!element) continue;
         const state = element.querySelector(".stage-state");
         element.className = "stage";
-        if (complete.has(stageName)) {
+        if (complete.has(stage.id)) {
           element.classList.add("complete");
           state.textContent = "Done";
-        } else if (failedStage === stageName) {
+          counted += 1;
+        } else if (skipped.has(stage.id)) {
+          element.classList.add("skipped");
+          state.textContent = "Skipped";
+          counted += 1;
+        } else if (failedStage === stage.id) {
           element.classList.add("failed");
           state.textContent = "Failed";
-        } else if (job.current_stage === stageName) {
+        } else if (job.current_stage === stage.id) {
           element.classList.add("active");
           state.textContent = "Running";
         } else {
@@ -639,25 +1059,33 @@
         }
       }
 
-      progressBar.style.width = `${Math.round((complete.size / stages.length) * 100)}%`;
+      progressBar.style.width = `${Math.round((counted / STAGES.length) * 100)}%`;
       jobIdLabel.textContent = `#${job.job_id}`;
 
       if (job.status === "failed") {
         statusBadge.textContent = "Failed";
-        jobStatus.textContent = `${job.error?.stage || "Pipeline"}: ${job.error?.message || "Unknown error"}`;
+        jobStatus.textContent = `${(job.error || {}).stage || "Pipeline"}: ${(job.error || {}).message || "Unknown error"}`;
         showMessage(jobStatus.textContent, "error");
         setBusy(false, "Try another video");
         clearInterval(pollTimer);
       } else if (job.status === "completed") {
         statusBadge.textContent = "Completed";
-        jobStatus.textContent = `${job.source_language || "Auto"} → ${job.target_language}`;
+        const speakers = (job.speakers || []).length;
+        jobStatus.textContent = `${job.source_language || "Auto"} → ${job.target_language}`
+          + (speakers > 1 ? ` · ${speakers} speakers` : "");
         progressBar.style.width = "100%";
         const videoUrl = `/jobs/${job.job_id}/download`;
         resultVideo.src = videoUrl;
         document.getElementById("video-download").href = videoUrl;
         document.getElementById("subtitle-download").href = `/jobs/${job.job_id}/subtitle`;
         result.classList.add("show");
-        showMessage("Dubbing completed. Preview or download the result.", "success");
+        const clamped = (job.alignment || {}).clamped;
+        showMessage(
+          clamped
+            ? `Dubbing completed. ${clamped} line(s) could not be shortened enough and still overrun.`
+            : "Dubbing completed. Preview or download the result.",
+          "success"
+        );
         setBusy(false, "Create another dub");
         clearInterval(pollTimer);
       } else if (job.current_stage) {
@@ -671,11 +1099,27 @@
 
     async function pollJob(jobId) {
       try {
-        const job = await readJson(await fetch(`/jobs/${jobId}`));
-        renderJob(job);
+        renderJob(await readJson(await fetch(`/jobs/${jobId}`)));
       } catch (error) {
         showMessage(`Could not read job progress: ${error.message}`, "error");
       }
+    }
+
+    function buildPayload() {
+      const data = new FormData();
+      data.append("file", fileInput.files[0]);
+      data.append("source_language", sourceSelect.value);
+      data.append("target_language", targetSelect.value);
+      for (const [task, control] of Object.entries(controls)) {
+        if (control.provider.value) data.append(`${task}_provider`, control.provider.value);
+        if (control.model.value) data.append(`${task}_model`, control.model.value);
+      }
+      // Send every flag explicitly: an unchecked box is absent from a form, and
+      // absent means "use the default", which is not the same as "off".
+      for (const [name, box] of Object.entries(toggles)) {
+        data.append(`enable_${name}`, box.checked ? "true" : "false");
+      }
+      return data;
     }
 
     form.addEventListener("submit", async event => {
@@ -693,12 +1137,12 @@
       try {
         const upload = await readJson(await fetch("/jobs/upload", {
           method: "POST",
-          body: new FormData(form)
+          body: buildPayload()
         }));
         jobIdLabel.textContent = `#${upload.job_id}`;
         document.querySelector('[data-stage="upload"]').classList.add("complete");
         document.querySelector('[data-stage="upload"] .stage-state').textContent = "Done";
-        progressBar.style.width = `${Math.round(100 / stages.length)}%`;
+        progressBar.style.width = `${Math.round(100 / STAGES.length)}%`;
 
         setBusy(true, "Starting n8n pipeline…");
         showMessage("Video stored. Sending the job to n8n…");
@@ -718,7 +1162,8 @@
       }
     });
 
-    loadLanguages();
+    renderStageList();
+    loadCapabilities();
   </script>
 </body>
 </html>

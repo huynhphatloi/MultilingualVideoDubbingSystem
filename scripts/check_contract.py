@@ -1,93 +1,200 @@
 #!/usr/bin/env python3
-"""Fail when the form, the local API, and the Colab server disagree.
+"""Fail when the frontend, the local API, the n8n form and the model registry
+disagree.
 
-The three lists drifted apart once already: the form offered seven voices while
-the Colab server implemented one, and every extra choice was silently dropped
-because FastAPI ignores unknown form fields. Nothing failed loudly, so the
-result simply reported a model that had never run.
+The three model lists drifted apart once already: the form offered seven voices
+while the Colab server implemented one, and every extra choice was silently
+dropped because FastAPI ignores unknown form fields. Nothing failed loudly, so
+the result simply reported a model that had never run.
+
+The registry is now the single source of truth, so this script no longer
+compares three copies of the same list. It checks that nothing has grown a
+fourth copy: the frontend must read /capabilities, the local API must not keep
+its own model tables, and the n8n form - which cannot fetch anything, being a
+static form - may only offer ids that the registry actually defines.
 """
 from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "colab"))
+
+import providers  # noqa: E402
+from providers.asr.mms import ADAPTER_OVERRIDES, UNSUPPORTED  # noqa: E402
+from providers.tts.edge import LOCALE_OVERRIDES  # noqa: E402
+from providers.tts.registry import MMS_TTS_LANGUAGES, MMS_TTS_OVERRIDES  # noqa: E402
+
+FORM_MODEL_FIELDS = {
+    "Speech Recognition Model": "asr",
+    "Translation Model": "translation",
+    "Voice Model": "tts",
+}
+FORM_FLAG_FIELDS = (
+    "Speaker Diarization", "Duration Alignment", "Source Separation", "Lip Sync",
+)
 
 
-def literals(path: Path, wanted: set[str]) -> dict:
-    """Read module-level constants without importing the heavy ML dependencies."""
-    found: dict[str, set] = {}
+def failures() -> list:
+    problems: list = []
+    problems.extend(providers.consistency_problems())
+    problems.extend(check_workflow())
+    problems.extend(check_local_api())
+    problems.extend(check_frontend())
+    problems.extend(check_provider_maps())
+    return problems
+
+
+def check_workflow() -> list:
+    """The n8n form is static, so its options must exist in the registry, and
+    its stage nodes must call stages the local API actually serves."""
+    problems = []
+    workflow = json.loads(
+        (ROOT / "n8n/workflows/simple-dubbing.json").read_text(encoding="utf-8")
+    )
+    nodes = workflow["nodes"]
+
+    form = next(
+        (node for node in nodes if node["type"] == "n8n-nodes-base.formTrigger"), None
+    )
+    if form is None:
+        return ["n8n workflow has no formTrigger node"]
+
+    fields = {
+        field["fieldLabel"]: [
+            option["option"].split()[0]
+            for option in field.get("fieldOptions", {}).get("values", [])
+        ]
+        for field in form["parameters"]["formFields"]["values"]
+    }
+    for label, task in FORM_MODEL_FIELDS.items():
+        if label not in fields:
+            problems.append(f"n8n form is missing the '{label}' field")
+            continue
+        known = set(providers.registry(task).ids())
+        unknown = [value for value in fields[label] if value not in known]
+        if unknown:
+            problems.append(
+                f"n8n form field '{label}' offers ids the registry does not "
+                f"define: {sorted(unknown)}"
+            )
+    for label in FORM_FLAG_FIELDS:
+        values = {value.lower() for value in fields.get(label, [])}
+        if not values <= {"on", "off", "automatic"}:
+            problems.append(
+                f"n8n form field '{label}' must offer On/Off options; got {sorted(values)}"
+            )
+
+    served = local_api_stages()
+    called = [
+        re.sub(r".*/stages/", "", node["parameters"]["url"])
+        for node in nodes
+        if node["type"] == "n8n-nodes-base.httpRequest"
+        and "/stages/" in node["parameters"].get("url", "")
+    ]
+    if called != served:
+        problems.append(
+            f"n8n stage nodes {called} do not match the local API's stages {served}"
+        )
+    return problems
+
+
+def literals(path: Path, wanted: set) -> dict:
+    """Read module-level constants without importing the heavy dependencies."""
+    found: dict = {}
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if not isinstance(node, ast.Assign):
             continue
         for target in node.targets:
-            if not isinstance(target, ast.Name) or target.id not in wanted:
-                continue
-            if isinstance(node.value, ast.Dict):
-                found[target.id] = {ast.literal_eval(key) for key in node.value.keys}
-            else:
-                found[target.id] = set(ast.literal_eval(node.value))
-    missing = wanted - set(found)
-    if missing:
-        raise SystemExit(f"{path}: could not find {sorted(missing)}")
+            if isinstance(target, ast.Name) and target.id in wanted:
+                found[target.id] = ast.literal_eval(node.value)
     return found
 
 
-def form_options(path: Path) -> dict:
-    workflow = json.loads(path.read_text(encoding="utf-8"))
-    for node in workflow["nodes"]:
-        if node["type"] != "n8n-nodes-base.formTrigger":
-            continue
-        return {
-            field["fieldLabel"]: {
-                option["option"].split()[0]
-                for option in field["fieldOptions"]["values"]
-            }
-            for field in node["parameters"]["formFields"]["values"]
-            if field.get("fieldOptions", {}).get("values")
-        }
-    raise SystemExit(f"{path}: no formTrigger node")
+def local_api_stages() -> list:
+    return literals(ROOT / "ai-service/app.py", {"STAGES"}).get("STAGES", [])
+
+
+def check_local_api() -> list:
+    """The local API must delegate model knowledge, not keep a copy."""
+    problems = []
+    source = (ROOT / "ai-service/app.py").read_text(encoding="utf-8")
+    for banned in ("_WHISPER_MODELS", "_TRANSLATION_ENGINES", "_TTS_ENGINES",
+                   "_CLONING_ENGINES"):
+        if banned in source:
+            problems.append(
+                f"ai-service/app.py defines {banned}: model lists belong to the "
+                f"registry, which /capabilities exposes"
+            )
+    if "from dubflow_core import languages" not in source:
+        problems.append("ai-service/app.py no longer imports the shared language table")
+    stages = local_api_stages()
+    import pipeline  # noqa: PLC0415 - imported here so the script stays light
+
+    if stages != pipeline.STAGE_NAMES:
+        problems.append(
+            f"local API stages {stages} differ from the Colab pipeline "
+            f"{pipeline.STAGE_NAMES}"
+        )
+    return problems
+
+
+def check_frontend() -> list:
+    """The frontend must read the registry rather than hold its own lists."""
+    problems = []
+    source = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    if '"/capabilities"' not in source:
+        problems.append("frontend/index.html does not fetch /capabilities")
+    if "Whisper Model" in source:
+        problems.append(
+            "frontend/index.html still labels the recogniser 'Whisper Model'; it "
+            "offers more than Whisper now"
+        )
+    match = re.search(r"const STAGES = \[(.*?)\];", source, re.S)
+    if not match:
+        problems.append("frontend/index.html has no STAGES list")
+        return problems
+    ids = re.findall(r'id:\s*"([a-z_]+)"', match.group(1))
+    expected = ["upload"] + local_api_stages()
+    if ids != expected:
+        problems.append(f"frontend stages {ids} do not match {expected}")
+    return problems
+
+
+def check_provider_maps() -> list:
+    """Each provider's language mapping has to cover what its spec advertises."""
+    problems = []
+    languages = providers.registry("asr").get("mms_asr").languages
+    for code in languages:
+        if code in UNSUPPORTED:
+            problems.append(f"mms_asr advertises '{code}', which it maps as unsupported")
+    for code in ADAPTER_OVERRIDES:
+        if code not in languages:
+            problems.append(f"mms adapter override '{code}' is not advertised by mms_asr")
+
+    tts = providers.registry("tts")
+    if set(tts.get("mms").languages) != set(MMS_TTS_LANGUAGES):
+        problems.append("the mms voice spec and MMS_TTS_LANGUAGES disagree")
+    for code in MMS_TTS_OVERRIDES:
+        if code not in MMS_TTS_LANGUAGES:
+            problems.append(f"MMS-TTS override '{code}' is not an advertised language")
+    for code in LOCALE_OVERRIDES:
+        if code not in tts.get("edge").languages:
+            problems.append(f"Edge locale override '{code}' is not an advertised language")
+    return problems
 
 
 def main() -> int:
-    app = literals(
-        ROOT / "ai-service/app.py",
-        {"_WHISPER_MODELS", "_TRANSLATION_ENGINES", "_TTS_ENGINES", "_CLONING_ENGINES"},
-    )
-    server = literals(
-        ROOT / "colab/server.py",
-        {"WHISPER_MODELS", "TRANSLATION_ENGINES", "TTS_ENGINES"},
-    )
-    form = form_options(ROOT / "n8n/workflows/simple-dubbing.json")
-
-    pairs = [
-        ("whisper models, app vs colab", app["_WHISPER_MODELS"], server["WHISPER_MODELS"]),
-        ("translation engines, app vs colab", app["_TRANSLATION_ENGINES"], server["TRANSLATION_ENGINES"]),
-        ("voice engines, app vs colab", app["_TTS_ENGINES"], server["TTS_ENGINES"]),
-        ("whisper models, form vs app", form["Whisper Model"], app["_WHISPER_MODELS"]),
-        ("translation engines, form vs app", form["Translation Engine"], app["_TRANSLATION_ENGINES"]),
-        ("voice engines, form vs app", form["Voice Engine"], app["_TTS_ENGINES"]),
-    ]
-    failures = 0
-    for label, left, right in pairs:
-        if left == right:
-            continue
-        failures += 1
-        print(f"MISMATCH {label}")
-        if left - right:
-            print(f"  only on the left : {sorted(left - right)}")
-        if right - left:
-            print(f"  only on the right: {sorted(right - left)}")
-
-    unknown = app["_CLONING_ENGINES"] - app["_TTS_ENGINES"]
-    if unknown:
-        failures += 1
-        print(f"MISMATCH _CLONING_ENGINES names an unknown engine: {sorted(unknown)}")
-
-    if failures:
-        print(f"\n{failures} contract mismatch(es)")
+    problems = failures()
+    for problem in problems:
+        print(f"MISMATCH {problem}")
+    if problems:
+        print(f"\n{len(problems)} contract mismatch(es)")
         return 1
     print("contract check passed")
     return 0

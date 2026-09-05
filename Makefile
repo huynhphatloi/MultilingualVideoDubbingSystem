@@ -3,7 +3,7 @@ COMPOSE := docker compose
 WORKFLOW_JSON := n8n/workflows/simple-dubbing.json
 WORKFLOW_ID := $(shell python3 -c "import json;print(json.load(open('$(WORKFLOW_JSON)'))['id'])" 2>/dev/null)
 
-.PHONY: start env import activate stop restart colab kaggle backends logs status check
+.PHONY: start env import activate stop restart colab kaggle backends logs status check test
 
 start: env ## Build and start n8n + the AI service, then import and activate the workflow
 	$(COMPOSE) up -d --build --wait
@@ -62,7 +62,10 @@ logs: ## Follow both service logs
 status: ## Show service status
 	$(COMPOSE) ps
 
-check: ## Offline syntax/configuration checks; does not download models
+test: ## Run the test suite; no models are downloaded and no GPU is needed
+	@python3 -m pytest tests -q
+
+check: test ## Offline syntax/configuration checks; does not download models
 	@python3 -c "import ast, pathlib; ast.parse(pathlib.Path('ai-service/app.py').read_text())"
 	@python3 -c "import ast, pathlib; ast.parse(pathlib.Path('colab/server.py').read_text())"
 	@python3 -m json.tool n8n/workflows/simple-dubbing.json >/dev/null

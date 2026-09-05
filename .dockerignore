@@ -3,3 +3,7 @@
 !ai-service/**
 !frontend/
 !frontend/**
+# Shared with the Colab service: the language table, segment schema and
+# alignment maths the local API imports instead of duplicating.
+!dubflow_core/
+!dubflow_core/**
