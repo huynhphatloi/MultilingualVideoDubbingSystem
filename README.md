@@ -1,123 +1,220 @@
-# Multilingual Video Dubbing with n8n
+# DubFlow — Multilingual Video Dubbing
 
-A model-agnostic dubbing pipeline. Every AI step is a **provider** behind a
-capability, so ASR, translation, TTS, diarization, source separation and lip
-sync can be swapped from the frontend or the n8n form without touching the
-pipeline. The Colab notebook is the reference execution environment; nothing is
-downloaded onto the local machine.
+A model-agnostic video dubbing pipeline. Speech recognition, translation, speech
+generation, speaker diarization, source separation and lip sync are each a
+**provider** behind a capability, so any of them can be swapped from the web UI
+or the n8n form without changing the pipeline. All inference runs on a Google
+Colab GPU; nothing is downloaded onto the machine running the stack.
 
-```text
- UPLOAD → EXTRACT AUDIO → DIARIZATION* → SPEECH RECOGNITION → MERGE SPEAKERS
-        → TRANSLATE → PER-SPEAKER REFERENCES* → GENERATE VOICE → ALIGN*
-        → SOURCE SEPARATION* → MIX → LIP SYNC* → RENDER → RESULT
-                                                       (* optional, skips itself)
+| | |
+|---|---|
+| **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · Google Colab |
+| **Models** | 19 ASR · 3 translation · 13 TTS · 1 diarization · 2 separation |
+| **Languages** | 50 (ISO-639-1), coverage declared per model |
+| **Tests** | 106, no GPU and no model download required |
+| **Status** | Reference implementation. Demo-grade security — see [Limitations](#limitations) |
+
+---
+
+## Contents
+
+- [Overview](#overview)
+- [Getting started](#getting-started)
+- [Architecture](#architecture)
+- [Models](#models)
+- [Configuration](#configuration)
+- [API reference](#api-reference)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Limitations](#limitations)
+- [Licensing and attribution](#licensing-and-attribution)
+
+---
+
+## Overview
+
+Upload a video, choose a target language and a set of models, and receive an
+MP4 with a synchronised voice-over and embedded subtitles.
+
+```mermaid
+flowchart TD
+    U([Upload video]) --> EX[Extract audio · FFmpeg]
+    EX --> DI{{Speaker diarization · pyannote}}
+    DI --> AR[Speech recognition · ASR provider]
+    AR --> MG[Merge speakers + transcript]
+    MG --> TR[Translate · translation provider]
+    TR --> VR{{Per-speaker voice references}}
+    VR --> SY[Generate voice · TTS provider]
+    SY --> AL{{Duration alignment}}
+    AL --> SP{{Source separation · Demucs}}
+    SP --> MX[Mix · FFmpeg]
+    MX --> LS{{Lip sync}}
+    LS --> RD[Render MP4 + SRT · FFmpeg]
+    RD --> OUT([Dubbed video])
 ```
 
-## Architecture
+Hexagons are optional stages. When a job switches one off it reports itself as
+skipped and the pipeline continues, so one graph serves every configuration.
 
-Three layers, and nothing reaches across them:
+**Three design rules** hold the project together:
 
-| Layer | Where | Knows about |
-|---|---|---|
-| HTTP API | `colab/server.py`, `ai-service/app.py` | requests, auth, files |
-| Pipeline | `colab/pipeline/*` | stage order, job state |
-| Providers | `colab/providers/<task>/*` | one model family each |
+1. **The pipeline never names a model.** Stages depend on `ASRProvider`,
+   `TTSProvider` and friends, never on Whisper or F5.
+2. **One catalogue.** `GET /capabilities` is the only list of models; the UI and
+   the local API read it rather than keeping copies.
+3. **Nothing is claimed that was not checked.** A model appears under a language
+   only if its own card or source says so, and its licence is recorded with it.
 
-* **`dubflow_core/`** is pure standard library and is shared by both services:
-  the language table, the canonical segment schema, and the alignment maths.
-  It is the reason the two implementations of the pipeline cannot disagree
-  about what a segment is.
-* **`colab/providers/<task>/registry.py`** holds metadata only - no torch, no
-  transformers - so `GET /capabilities` answers correctly in a session where
-  nothing optional is installed, reporting each engine as `available: false`
-  instead of failing to start.
-* **`colab/providers/<task>/<name>.py`** is imported the first time a model is
-  actually run.
-* **`colab/pipeline/<stage>.py`** depends on capabilities (`ASRProvider`,
-  `TTSProvider`, ...), never on Whisper or F5 directly.
+---
 
-```text
-dubflow_core/          languages.py  segments.py  alignment.py
-colab/
-  server.py            HTTP only
-  jobs.py              job store + single-worker queue
-  core/                errors, runtime (device, model slots), media, config
-  providers/
-    base.py            ModelSpec + Registry
-    asr/               base, registry, faster_whisper, seamless, mms,
-                       sensevoice, parakeet, windows
-    translation/       base, registry, nllb, seamless
-    tts/               base, registry, mms, edge, piper, xtts, f5, chatterbox,
-                       kokoro, openvoice, cosyvoice, vieneu
-    diarization/       base, registry, pyannote
-    separation/        base, registry, demucs
-    lipsync/           base, registry (no provider ships - see the file)
-  pipeline/            extract, diarize, transcribe, merge_segments, translate,
-                       voice_reference, synthesize, align, separate, mix,
-                       lipsync, render
-```
+## Getting started
 
-### One source of truth
+### Prerequisites
 
-`GET /capabilities` on the AI service is the catalogue. The local API proxies
-it, the frontend renders it, and `scripts/check_contract.py` fails the build if
-anything grows a second copy of a model list. The n8n form is the one place
-that cannot fetch - it is a static form - so the contract check verifies that
-every id it offers exists in the registry.
+| Requirement | Notes |
+|---|---|
+| Docker Desktop, running | Supplies n8n and FFmpeg. Nothing else is installed locally |
+| `python3` ≥ 3.9 on the host | Only for `make check` and the tests |
+| A Google account with Colab GPU access | Every AI stage runs there; there is no local fallback |
 
-## Prerequisites
+### 1. Start the AI service on Colab
 
-- **Docker Desktop**, running. It supplies n8n and FFmpeg.
-- **`python3`** on the host, for `make check` and the tests.
-- **A Google account with Colab GPU access.** Every AI stage runs there and
-  there is no local fallback.
+1. Open [`colab/ai_service.ipynb`](colab/ai_service.ipynb) in Google Colab and
+   select a GPU runtime.
+2. In the first cell, enable only the engines you intend to use — see
+   [Dependency conflicts](#dependency-conflicts) — and paste a Hugging Face
+   token into `HF_TOKEN` if you want speaker diarization.
+3. Run all cells. The last one prints a ready-to-run command.
 
-## Start Colab first
-
-1. Open `colab/ai_service.ipynb` in Google Colab, select a GPU runtime.
-2. In the first cell, turn on only the engines you intend to test (see
-   [Dependency conflicts](#dependency-conflicts)) and paste an `HF_TOKEN` if you
-   want diarization.
-3. Run all cells. The last one prints a ready-to-run command:
+### 2. Point the local stack at that session
 
 ```bash
 make colab URL=https://your-tunnel.trycloudflare.com TOKEN=your-token
 ```
 
-The tunnel URL changes whenever the session restarts.
+This writes `.env`, restarts the API and reports which backends are live. The
+tunnel URL changes every time the Colab session restarts.
 
-## Run the application
+### 3. Start the stack
 
 ```bash
 make start
 ```
 
-Then open <http://localhost:8000> for the demo app and <http://localhost:5678>
-for the n8n graph. `make check` runs the offline checks and the test suite;
-neither downloads a model.
+| Service | URL |
+|---|---|
+| Web UI | <http://localhost:8000> |
+| API documentation | <http://localhost:8000/docs> |
+| n8n workflow | <http://localhost:5678> |
+
+Upload a short clip — ten to twenty seconds is enough for a first run — and
+watch the thirteen stages execute.
+
+---
+
+## Architecture
+
+### Layers
+
+Three layers, and nothing reaches across them:
+
+| Layer | Location | Responsibility |
+|---|---|---|
+| HTTP API | `colab/server.py`, `ai-service/app.py` | Requests, authentication, files |
+| Pipeline | `colab/pipeline/` | Stage order and job state |
+| Providers | `colab/providers/<task>/` | One model family each |
+
+- **`dubflow_core/`** is pure standard library and is imported by both
+  services: the language table, the canonical segment schema, the alignment
+  arithmetic and the audio filter graphs. It is why the two implementations of
+  the pipeline cannot disagree about what a segment is or how a mix is built.
+- **`colab/providers/<task>/registry.py`** holds metadata only — no torch, no
+  transformers — so `GET /capabilities` answers correctly in a session where
+  nothing optional is installed, reporting each engine as `available: false`
+  rather than failing to start.
+- **`colab/providers/<task>/<name>.py`** is imported the first time a model is
+  actually run.
+
+### Repository layout
+
+```text
+dubflow_core/            Shared, dependency-free: languages, segments,
+                         alignment, mixing
+colab/                   AI service (runs on the Colab GPU)
+  ai_service.ipynb       Notebook: install flags, launch, tunnel
+  server.py              HTTP layer only
+  jobs.py                Job store and single-worker queue
+  core/                  Errors, runtime (device, model slots), media, config
+  providers/
+    base.py              ModelSpec and Registry
+    asr/                 faster_whisper, seamless, mms, sensevoice, parakeet
+    translation/         nllb, seamless
+    tts/                 mms, edge, piper, xtts, f5, chatterbox, kokoro,
+                         openvoice, cosyvoice, vieneu
+    diarization/         pyannote
+    separation/          demucs
+    lipsync/             registry only — no provider ships, see the file
+  pipeline/              The twelve stages and the runner
+ai-service/              Local FastAPI service: storage, FFmpeg, orchestration
+frontend/index.html      Single-file web UI, reads /capabilities
+n8n/workflows/           The visual pipeline
+scripts/                 check_contract.py, set_backend.py
+tests/                   106 tests, no GPU required
+```
+
+### Pipeline stages
+
+On the n8n route the FFmpeg stages run locally and only the model calls cross
+the tunnel. The notebook's own `POST /jobs` runs all thirteen in Colab.
+
+| # | Stage | Runs on | Optional | Produces |
+|---|---|---|---|---|
+| 1 | `extract` | Local FFmpeg | | 48 kHz soundtrack + 16 kHz mono for the models |
+| 2 | `diarize` | AI service | ● | Speaker turns |
+| 3 | `transcribe` | AI service | | Canonical segments |
+| 4 | `merge_segments` | Local | | A speaker per segment, by time overlap |
+| 5 | `translate` | AI service | | Translations and the SRT (skipped when source = target) |
+| 6 | `voice_references` | Local + AI service | ● | One clean reference clip per speaker |
+| 7 | `synthesize` | AI service | | One WAV per segment |
+| 8 | `align` | Local FFmpeg | ● | Each line fitted to its time window |
+| 9 | `separate` | AI service | ● | Background stem without the original speech |
+| 10 | `mix` | Local FFmpeg | | Dub track placed at timestamps, blended |
+| 11 | `lipsync` | — | ● | No provider ships with this build |
+| 12 | `render` | Local FFmpeg | | MP4 with audio and embedded subtitles |
+
+### One source of truth
+
+`GET /capabilities` is the catalogue. The local API proxies it, the web UI
+renders it, and [`scripts/check_contract.py`](scripts/check_contract.py) fails
+`make check` if anything grows a second copy of a model list. The n8n form is
+the one place that cannot fetch — it is a static form — so the contract check
+verifies that every id it offers exists in the registry.
+
+---
 
 ## Models
 
-Everything below was verified against the model's own card or source. A model is
-listed under a language **only** if its own documentation says so.
+Every entry below was checked against the model's own card or source. A model is
+listed under a language **only** if its own documentation says so, and its
+licence is recorded in the registry and reported by `/capabilities`.
 
 ### Speech recognition
 
 | Model | Provider | Languages | Timestamps | Detects language | Licence | Install |
 |---|---|---|---|---|---|---|
-| `tiny` … `large-v3-turbo` (7 multilingual) | faster_whisper | all 50 | yes | yes | MIT | base |
-| `tiny.en` … `medium.en`, `distil-*` (7 English-only) | faster_whisper | English | yes | no | MIT | base |
-| `seamless_asr` | seamless | 48 (no Malay, Sinhala) | no, windowed | no | CC-BY-NC-4.0 | base |
-| `mms_asr` | mms | 49 (no Sinhala) | no, windowed | no | CC-BY-NC-4.0 | base |
-| `sensevoice_small` | sensevoice | zh, en, ja, ko | no, windowed | yes | FunASR model licence | `funasr` |
-| `parakeet_tdt_0.6b_v3` | parakeet | 21 European | yes | no¹ | CC-BY-4.0 | `nemo_toolkit[asr]` |
-| `parakeet_tdt_0.6b_v2` | parakeet | English | yes | no | CC-BY-4.0 | `nemo_toolkit[asr]` |
+| `tiny` … `large-v3-turbo` (7 multilingual) | faster_whisper | all 50 | ✓ | ✓ | MIT | base |
+| `tiny.en` … `medium.en`, `distil-*` (7 English-only) | faster_whisper | English | ✓ | — | MIT | base |
+| `seamless_asr` | seamless | 48 (no Malay, Sinhala) | windowed | — | CC-BY-NC-4.0 | base |
+| `mms_asr` | mms | 49 (no Sinhala) | windowed | — | CC-BY-NC-4.0 | base |
+| `sensevoice_small` | sensevoice | zh, en, ja, ko | windowed | ✓ | FunASR model licence | `funasr` |
+| `parakeet_tdt_0.6b_v3` | parakeet | 21 European | ✓ | —¹ | CC-BY-4.0 | `nemo_toolkit[asr]` |
+| `parakeet_tdt_0.6b_v2` | parakeet | English | ✓ | — | CC-BY-4.0 | `nemo_toolkit[asr]` |
 
 ¹ Parakeet v3 transcribes without being told the language but never reports
-which one it heard, and the translation stage needs that answer - so the source
+which one it heard, and the translation stage needs that answer — so the source
 language still has to be named.
 
-A recogniser without timestamps is not excluded: the pipeline gives it windows,
+A recogniser without timestamps is not excluded. The pipeline supplies windows,
 taken from the diarization turns when that stage ran and from a voice-activity
 pass otherwise, and it produces the same canonical segments as Whisper.
 
@@ -133,39 +230,43 @@ pass otherwise, and it produces the same canonical segments as Whisper.
 
 | Model | Languages | Clones | Reference | Licence | Install |
 |---|---|---|---|---|---|
-| `mms` | 34 | no | – | CC-BY-NC-4.0 | base |
-| `edge` | 49 (no Armenian) | no | – | Microsoft service terms | `edge-tts` |
-| `piper` | 41 | no | – | MIT | `piper-tts` |
-| `xtts_v2` | 17 (**no Vietnamese**) | yes | required | CPML (non-commercial) | `coqui-tts` |
-| `vixtts` | Vietnamese | yes | required | CPML (non-commercial) | `coqui-tts` |
-| `f5_base` | en, zh | yes | required | CC-BY-NC-4.0 | `f5-tts` |
-| `f5_vi` | Vietnamese | yes | required | CC-BY-NC-4.0 | `f5-tts` |
-| `chatterbox` | 23 (**no Vietnamese**) | yes | optional | MIT | `chatterbox-tts` |
-| `chatterbox_en` | English | yes | optional | MIT | `chatterbox-tts` |
-| `kokoro` | en, es, fr, hi, it, ja, pt, zh | no | – | Apache-2.0 | `kokoro` + espeak-ng |
-| `openvoice_v2` | en, es, fr, zh, ja, ko | yes | required | MIT | OpenVoice + MeloTTS (git) |
-| `cosyvoice2` | zh, en, ja, ko, de, es, fr, it, ru | yes | required + transcript | Apache-2.0 | git clone |
-| `vieneu` | Vietnamese | yes | required | Apache-2.0 | `vieneu` |
+| `mms` | 34 | — | — | CC-BY-NC-4.0 | base |
+| `edge` | 49 (no Armenian) | — | — | Microsoft service terms | `edge-tts` |
+| `piper` | 41 | — | — | MIT | `piper-tts` |
+| `xtts_v2` | 17 (**no Vietnamese**) | ✓ | required | CPML (non-commercial) | `coqui-tts` |
+| `vixtts` | Vietnamese | ✓ | required | CPML (non-commercial) | `coqui-tts` |
+| `f5_base` | en, zh | ✓ | required | CC-BY-NC-4.0 | `f5-tts` |
+| `f5_vi` | Vietnamese | ✓ | required | CC-BY-NC-4.0 | `f5-tts` |
+| `chatterbox` | 23 (**no Vietnamese**) | ✓ | optional | MIT | `chatterbox-tts` |
+| `chatterbox_en` | English | ✓ | optional | MIT | `chatterbox-tts` |
+| `kokoro` | en, es, fr, hi, it, ja, pt, zh | — | — | Apache-2.0 | `kokoro` + espeak-ng |
+| `openvoice_v2` | en, es, fr, zh, ja, ko | ✓ | required | MIT | OpenVoice + MeloTTS (git) |
+| `cosyvoice2` | zh, en, ja, ko, de, es, fr, it, ru | ✓ | required + transcript | Apache-2.0 | git clone |
+| `vieneu` | Vietnamese | ✓ | required | Apache-2.0 | `vieneu` |
 
-`mms` covers 34 of the application's 50 languages: **Meta publishes no MMS-TTS
+`mms` covers 34 of the 50 application languages: **Meta publishes no MMS-TTS
 checkpoint** for Japanese, Chinese, Italian, Czech, Danish, Norwegian, Urdu,
 Croatian, Serbian, Slovak, Slovenian, Armenian, Georgian, Nepali, Sinhala or
-Mongolian. Those combinations are now refused with a clear message instead of
-failing on a 404 from the Hub.
+Mongolian. Those combinations are rejected at job creation with a message naming
+a working alternative, rather than failing on a 404 from the Hub.
 
 ### Diarization, separation, lip sync
 
 | Task | Model | Licence | Install |
 |---|---|---|---|
-| diarization | `pyannote_3_1` | MIT (gated weights) | `pyannote.audio` + `HF_TOKEN` |
-| separation | `htdemucs`, `htdemucs_ft` | MIT | `demucs` |
-| lip sync | none | – | see `colab/providers/lipsync/registry.py` |
+| Diarization | `pyannote_3_1` | MIT, gated weights | `pyannote.audio` + `HF_TOKEN` |
+| Separation | `htdemucs`, `htdemucs_ft` | MIT | `demucs` |
+| Lip sync | none | — | see [`colab/providers/lipsync/registry.py`](colab/providers/lipsync/registry.py) |
 
-## Optional installation flags
+---
+
+## Configuration
+
+### Optional model packages
 
 The notebook's first cell has one flag per optional package. The base install
-covers Whisper, SeamlessM4T and MMS recognition, both translation engines, and
-the `mms` voice - nothing else is installed unless asked for.
+covers Whisper, SeamlessM4T and MMS recognition, both translation engines and
+the `mms` voice; nothing else is installed unless asked for.
 
 ```python
 INSTALL_EDGE = True          INSTALL_SENSEVOICE = False
@@ -186,27 +287,117 @@ that disagree is the usual cause of a Colab runtime that has to be restarted.
 
 | Do not combine | Reason |
 |---|---|
-| `INSTALL_COQUI` + `INSTALL_F5` | both pin `torch`/`transformers`, in different directions |
+| `INSTALL_COQUI` + `INSTALL_F5` | Both pin `torch` and `transformers`, in different directions |
 | `INSTALL_COQUI` + `INSTALL_PARAKEET` | NeMo pins `transformers` against coqui-tts |
-| `INSTALL_CHATTERBOX` + anything else heavy | pins `transformers`; keep it with the base install |
+| `INSTALL_CHATTERBOX` + anything else heavy | Pins `transformers`; keep it with the base install |
 | `INSTALL_SENSEVOICE` + anything else heavy | `funasr` pins `torch` |
-| `INSTALL_VIENEU` + anything else heavy | pins its own `transformers` |
+| `INSTALL_VIENEU` + anything else heavy | Pins its own `transformers` |
 
 `INSTALL_EDGE`, `INSTALL_PIPER`, `INSTALL_KOKORO`, `INSTALL_DIARIZATION` and
 `INSTALL_DEMUCS` are safe alongside the base install. `INSTALL_OPENVOICE` and
 `INSTALL_COSYVOICE` install from git and are the most fragile of the set.
 
-Base Colab stays reproducible: `colab/requirements.txt` pins seven packages and
-never touches torch, which Colab ships matched to its own CUDA.
+The base environment stays reproducible: `colab/requirements.txt` pins seven
+packages and never touches torch, which Colab ships matched to its own CUDA.
 
-## Memory
+### Environment variables — local stack
 
-Nothing is preloaded. Each task owns a slot that holds exactly one model;
-asking for a different one releases the previous one, runs `gc.collect()` and
-empties the CUDA cache. `POST /unload` drops everything, and `GET /health`
-reports what is resident.
+Set in `.env`; `docker-compose.yml` passes them through.
 
-## API
+| Variable | Default | Purpose |
+|---|---|---|
+| `AI_BACKENDS` | `colab,kaggle` | Notebook sessions to try, most preferred first |
+| `COLAB_API_URL` | — | Tunnel URL printed by the notebook |
+| `COLAB_API_TOKEN` | — | Bearer token printed by the notebook |
+| `KAGGLE_API_URL` / `KAGGLE_API_TOKEN` | — | Second backend slot |
+| `COLAB_API_TIMEOUT` | `1800` | Seconds allowed per backend call |
+| `BACKEND_PROBE_TTL` | `30` | Seconds a successful `/health` probe is cached |
+| `BACKEND_PROBE_TIMEOUT` | `10` | Seconds to wait for `/health` |
+| `CAPABILITIES_TTL` | `60` | Seconds the model catalogue is cached |
+| `DATA_ROOT` | `/data/jobs` | Job storage inside the container |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | Used to build download URLs |
+| `N8N_WEBHOOK_URL` | `http://n8n:5678/webhook/dubbing/start` | Where `POST /jobs/{id}/start` sends the job |
+
+Each backend name `NAME` in `AI_BACKENDS` reads `NAME_API_URL` and
+`NAME_API_TOKEN`, so the default keeps the existing `COLAB_*` pair working.
+Before each call the service probes `/health` in order and uses the first that
+answers. **A notebook session cannot be started from here** — neither Colab nor
+Kaggle exposes an API for that — so this fails over between sessions that are
+already running, and `make backends` reports which those are.
+
+### Environment variables — AI service
+
+Set in the notebook before the launch cell.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTH_TOKEN` | generated per session | Bearer token; empty disables authentication |
+| `WHISPER_MODEL` | `small` | Model used when a request names none |
+| `HF_TOKEN` | — | Hugging Face token for gated weights. `HUGGINGFACE_TOKEN` and `HUGGING_FACE_HUB_TOKEN` are also read |
+| `JOBS_ROOT` | `/content/dubflow-jobs` | Where end-to-end jobs are stored |
+| `JOBS_LIMIT` | `20` | Job folders kept before the oldest are deleted |
+| `DUBFLOW_DEVICE` | auto-detected | Force `cuda` or `cpu` |
+| `DUBFLOW_KEEP_MODELS` | unset | Keep models resident between stages — see [Memory](#memory) |
+| `TRANSLATION_MODEL` | `facebook/nllb-200-distilled-600M` | Override the default NLLB checkpoint |
+| `SEAMLESS_MODEL` | `facebook/hf-seamless-m4t-medium` | Override the SeamlessM4T checkpoint |
+| `F5_VI_MODEL` | `hynt/F5-TTS-Vietnamese-ViVoice` | Override the F5 Vietnamese checkpoint |
+| `COSYVOICE_ROOT` | `/content/CosyVoice` | CosyVoice checkout |
+| `COSYVOICE_MODEL` | downloaded | Local CosyVoice weights |
+| `OPENVOICE_CHECKPOINTS` | downloaded | Local OpenVoice V2 checkpoints |
+
+### Memory
+
+Nothing is preloaded. Each task owns a slot holding exactly one model; asking
+for a different one releases the previous, runs `gc.collect()` and empties the
+CUDA cache. `GET /health` reports what is resident and `POST /unload` drops
+everything.
+
+`POST /jobs` goes further: a slot is freed as soon as no later stage of that job
+needs it, so the recogniser is gone before the voice loads and peak memory is
+roughly one model rather than three. Set `DUBFLOW_KEEP_MODELS=1` to keep them
+for the next job instead, which is worth it where memory is not the constraint.
+
+The n8n route cannot do this — it calls `/transcribe`, `/translate` and
+`/synthesize` as independent requests, none of which knows what comes next — so
+all three models stay resident. Call `POST /unload` between runs if the GPU is
+tight.
+
+---
+
+## API reference
+
+Both services expose OpenAPI documentation at `/docs`.
+
+### AI service (Colab)
+
+All routes take `Authorization: Bearer $COLAB_API_TOKEN` when `AUTH_TOKEN` is
+set. `GET /health` stays open so the local service can probe it.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/capabilities` | The model catalogue and what this session can run |
+| `GET` | `/health` | Liveness, device, resident models |
+| `GET` | `/languages` | The 50 application languages |
+| `POST` | `/validate` | Check a job configuration without creating one |
+| `POST` | `/jobs` | Dub a video end to end (returns immediately) |
+| `GET` | `/jobs`, `/jobs/{id}` | List, or one job's status and configuration |
+| `GET` | `/jobs/{id}/segments` | Canonical segments, turns and references |
+| `GET` | `/jobs/{id}/download`, `/subtitle` | The rendered MP4 and the SRT |
+| `DELETE` | `/jobs/{id}` | Remove a job and its files |
+| `POST` | `/unload` | Release every resident model |
+
+Stage endpoints are reusable on their own — a system that needs only
+translation and speech never touches ASR or video:
+
+| Method | Path | In → out |
+|---|---|---|
+| `POST` | `/diarize` | audio → speaker turns |
+| `POST` | `/transcribe` | audio [+ turns] → canonical segments |
+| `POST` | `/translate` | texts → translations |
+| `POST` | `/synthesize` | text [+ reference] → WAV |
+| `POST` | `/align` | segments → per-segment speed plan |
+| `POST` | `/separate` | audio → one stem |
+| `POST` | `/reference` | audio [+ transcript] → `reference_id` |
 
 ```bash
 # What can this session actually run?
@@ -229,24 +420,26 @@ curl -X POST "$COLAB_API_URL/jobs" -H "Authorization: Bearer $COLAB_API_TOKEN" \
      -F enable_alignment=true
 
 curl "$COLAB_API_URL/jobs/<job_id>"           # status, config, alignment summary
-curl "$COLAB_API_URL/jobs/<job_id>/segments"  # canonical segments and turns
 curl -OJ "$COLAB_API_URL/jobs/<job_id>/download"
 ```
 
-Stage endpoints are reusable on their own - a system that only needs
-translation and speech never touches ASR or video:
+### Local service
 
-```text
-POST /diarize     audio            → speaker turns
-POST /transcribe  audio [+turns]   → canonical segments
-POST /translate   texts            → translations
-POST /synthesize  text             → WAV
-POST /align       segments         → per-segment speed plan
-POST /separate    audio            → one stem
-POST /reference   audio [+text]    → reference_id
-```
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/` | The web UI |
+| `GET` | `/capabilities` | The backend's catalogue, or why it is unavailable |
+| `GET` | `/health`, `/backends`, `/languages` | Status and configuration |
+| `POST` | `/jobs/upload` | Store a video and settle its configuration |
+| `POST` | `/jobs/{id}/start` | Hand the job to n8n |
+| `POST` | `/stages/{stage}` | Run one stage; the twelve names are in the table above |
+| `GET` | `/jobs/{id}` | The full job manifest |
+| `GET` | `/jobs/{id}/download`, `/subtitle` | Results |
 
 ### Canonical segment
+
+Every stage reads and writes the same record, so a skipped stage never leaves
+the next one guessing.
 
 ```json
 {
@@ -263,83 +456,141 @@ POST /reference   audio [+text]    → reference_id
 ```
 
 `alignment_status` is one of `fits`, `aligned`, `clamped` (the speed limit was
-reached and the line still overruns), `stretched` or `unmeasured`. Limits are
-`min_speed` / `max_speed` per request, defaulting to 0.75 and 1.35.
+reached and the line still overruns), `stretched` or `unmeasured`. The limits
+are `min_speed` and `max_speed` per request, defaulting to 0.75 and 1.35.
 
-Speaker labels are diarization labels. `SPEAKER_00` is a cluster, not a person.
+Speaker labels are diarization labels: `SPEAKER_00` is a cluster, not a person.
 
-## Migration from the previous API
+### Compatibility with the previous API
 
-Nothing was removed. The old parameters still work and map onto the new ones:
+Nothing was removed. The old parameters still work and map onto the new ones.
 
-| Old | New | Notes |
+| Previous | Current | Notes |
 |---|---|---|
 | `model=large-v3` | `asr_model=large-v3` | `model` still accepted |
-| `translation_engine=nllb` | `translation_model=nllb` | still accepted |
-| `tts_engine=mms` | `tts_model=mms` | still accepted |
-| `GET /health` `whisper_models`, `tts_engines` | `GET /capabilities` | old keys still published |
-| `POST /jobs` 6-stage progress | 12 stages, optional ones skip | `progress` counts planned stages only |
+| `translation_engine=nllb` | `translation_model=nllb` | Still accepted |
+| `tts_engine=mms` | `tts_model=mms` | Still accepted |
+| `GET /health` → `whisper_models`, `tts_engines` | `GET /capabilities` | The old keys are still published |
+| Six-stage progress | Twelve stages, optional ones skip | `progress` counts planned stages only |
 
-Behaviour that changed on purpose:
+Three behaviours changed deliberately:
 
-* **Alignment is on by default.** Generated speech is fitted to its window; the
-  old pipeline measured the duration and ignored it.
-* **Language support is enforced.** Combinations that used to fail deep inside
-  a stage (`mms` with Japanese, `edge` with Norwegian or Tagalog) are refused at
-  job creation with a message naming a working alternative.
-* **Voice references are per speaker** when diarization is on. With it off, the
-  behaviour is the old one: one reference for the whole video.
+- **Alignment is on by default.** Generated speech is fitted to its window; the
+  previous pipeline measured the duration and ignored it.
+- **Language support is enforced.** Combinations that used to fail deep inside a
+  stage — `mms` with Japanese, `edge` with Norwegian or Tagalog — are refused at
+  job creation.
+- **Voice references are per speaker** when diarization is on. With it off the
+  behaviour is unchanged: one reference for the whole video.
 
-## Testing
+---
 
-```bash
-make test    # or: python3 -m pytest tests -q
-make check   # tests + syntax + JSON + contract + compose config
-```
+## Development
 
-The suite needs no GPU, no model download and no torch: the registry, the API,
-the configuration rules and both pipelines (Colab and local) are exercised with
-stand-in models and real FFmpeg.
-
-## Commands
+### Tests
 
 ```bash
-make status    # service status
-make logs      # follow both service logs
-make restart   # apply .env or app.py changes
-make backends  # which notebook backends are alive
-make colab URL=.. TOKEN=..  # point at a new Colab session
-make import    # re-import and re-activate the workflow after editing its JSON
-make test      # run the test suite
-make check     # offline checks
-make stop      # stop containers, keep jobs and n8n data
+make test    # python3 -m pytest tests -q
+make check   # tests + syntax + JSON + contract + compose validation
 ```
 
-## Notebook backends
+The suite needs no GPU, no model download and no torch. The registry, the API,
+the configuration rules and both implementations of the pipeline are exercised
+with stand-in models and real FFmpeg.
 
-`AI_BACKENDS` lists the notebook sessions to try, most preferred first. Each
-name `NAME` reads `NAME_API_URL` and `NAME_API_TOKEN`:
+### Contract check
 
-```env
-AI_BACKENDS=colab,kaggle
-COLAB_API_URL=https://your-tunnel.trycloudflare.com
-COLAB_API_TOKEN=your-token
-KAGGLE_API_URL=
-KAGGLE_API_TOKEN=
-```
+`scripts/check_contract.py` fails when the frontend, the local API, the n8n form
+and the registry disagree — for example if the web UI stops reading
+`/capabilities`, the local API grows its own model list, or the n8n form offers
+an id the registry does not define.
 
-Before each call the service probes `/health` in order and uses the first that
-answers, caching for `BACKEND_PROBE_TTL` seconds. **A notebook session cannot be
-started from here** - neither Colab nor Kaggle exposes an API for that - so this
-fails over between sessions that are already running.
+### Make targets
 
-## Known limitations
+| Target | Effect |
+|---|---|
+| `make start` | Build, start, import and activate the workflow |
+| `make colab URL=… TOKEN=…` | Point the stack at a Colab session |
+| `make kaggle URL=… TOKEN=…` | The same for the second backend slot |
+| `make backends` | Which notebook sessions are alive |
+| `make restart` | Apply `.env` or `app.py` changes |
+| `make import` | Re-import and re-activate the workflow after editing its JSON |
+| `make logs` / `make status` | Follow logs, show service status |
+| `make test` / `make check` | Test suite, offline checks |
+| `make stop` | Stop containers, keep jobs and n8n data |
 
-* No lip-sync provider ships; the stage and the flag exist, the registry is
-  empty on purpose.
-* Source separation sends the full soundtrack to the notebook and downloads a
-  stem, which is the largest transfer in the pipeline.
-* Segments are never split at a speaker change: an utterance where two people
-  overlap is credited to whoever holds most of it, recorded in
+`frontend/index.html`, `ai-service/app.py` and `dubflow_core/` are bind-mounted.
+Frontend edits appear on refresh; Python edits need `make restart`. Only
+dependency changes require a rebuild.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| UI shows **Backend out of date** | The Colab session predates the model registry | Re-run all cells, then `make colab URL=… TOKEN=…` |
+| UI shows **No AI backend** | The tunnel URL changed or the session stopped | `make backends`, then re-point with `make colab` |
+| `make start` reports auto-activation unavailable | The n8n CLI refused to activate | Open <http://localhost:5678>, open *Multilingual Dubbing*, save it, set it Active |
+| Upload rejected: *does not support target language* | The chosen engine has no such language | Pick another model; the error names working alternatives |
+| Upload rejected: *cannot detect the spoken language* | The recogniser has no language identification | Set **Original language** explicitly instead of Detect automatically |
+| `503` *needs the '…' package* | The engine's flag is off in the notebook | Enable it in cell 1, re-run the install cell, restart the API cell |
+| `503` *HF_TOKEN is not set* | pyannote's weights are gated | Accept the conditions on both pyannote model pages, paste a token into cell 1 |
+| Colab restarts the runtime after installing | Conflicting pins | Enable fewer engines — see [Dependency conflicts](#dependency-conflicts) |
+| Job fails at `synthesize` with *needs a reference sample* | Cloning is on but no reference survived | Re-run the job; avoid running several multi-speaker jobs at once |
+| CUDA out of memory on the n8n route | Three models resident at once | `POST /unload`, or choose a smaller checkpoint |
+
+---
+
+## Limitations
+
+- No lip-sync provider ships. The stage, the flag and the abstraction exist; the
+  registry is empty on purpose, and the file explains what adding one involves.
+- Source separation sends the full soundtrack to the notebook and downloads a
+  stem — the largest transfer in the pipeline.
+- Segments are never split at a speaker change. An utterance where two people
+  overlap is credited to whichever speaker holds most of it, recorded in
   `speaker_confidence`.
-* Colab storage is ephemeral. A dropped session loses queued and running jobs.
+- Colab storage is ephemeral. A dropped session loses queued and running jobs, so
+  download results promptly.
+- **The local services have no authentication.** `ai-service` publishes port 8000
+  and n8n publishes 5678, both unauthenticated. This is a demo stack; do not
+  expose it to a network you do not control.
+- The n8n workflow has no retry or failure branch: a dropped tunnel stops the
+  run. The web UI still reports the failing stage and its message.
+- Voice references uploaded through `POST /reference` share one store capped at
+  16 clips, so several concurrent multi-speaker jobs can evict each other's
+  samples. The notebook's own `POST /jobs` route keeps references inside the job
+  folder and is unaffected.
+
+---
+
+## Licensing and attribution
+
+This repository does not yet carry a licence file. Add one before publishing;
+until then, no licence is granted for the project's own source.
+
+Model weights keep their own licences, which are recorded in the registry and
+reported by `/capabilities`. They are **not** interchangeable:
+
+| Licence | Models | Implication |
+|---|---|---|
+| MIT / Apache-2.0 | Whisper, Piper, Chatterbox, Kokoro, CosyVoice 2, VieNeu-TTS, pyannote, Demucs | Commercial use permitted, subject to each licence |
+| CC-BY-4.0 | Parakeet | Commercial use with attribution |
+| CC-BY-NC-4.0 | NLLB-200, SeamlessM4T, MMS (ASR and TTS), F5-TTS | **Non-commercial only** |
+| CPML | XTTS-v2, viXTTS | **Non-commercial only** |
+| FunASR model licence | SenseVoiceSmall | See the model card |
+| Service terms | Edge TTS | Sends text to a Microsoft endpoint — unsuitable for confidential material |
+
+**Every translation model in this build is CC-BY-NC-4.0**, so any end-to-end dub
+produced with it is non-commercial regardless of which voice was used.
+Community fine-tunes — `vixtts`, `f5_vi`, `vieneu`, `sensevoice_small` — are
+marked `experimental` in the registry.
+
+Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper),
+[NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M),
+[SeamlessM4T](https://huggingface.co/facebook/seamless-m4t-v2-large),
+[MMS](https://huggingface.co/facebook/mms-1b-all),
+[pyannote.audio](https://github.com/pyannote/pyannote-audio),
+[Demucs](https://github.com/adefossez/demucs),
+[n8n](https://n8n.io) and [FFmpeg](https://ffmpeg.org).

@@ -20,6 +20,7 @@ from typing import Callable, Dict, List, Optional
 
 import pipeline
 from core.errors import InvalidRequest, ServiceError
+from core.runtime import slot
 
 ALLOWED_VIDEO = {".mp4", ".mkv", ".mov", ".webm", ".m4v"}
 JOB_ID_LENGTH = 12
@@ -40,6 +41,10 @@ def _default_root() -> Path:
 ROOT = _default_root()
 #: Colab disk is finite and shared; keep only the most recent jobs.
 LIMIT = int(os.getenv("JOBS_LIMIT", "20"))
+#: Free a model as soon as no later stage of the job needs it. Set
+#: DUBFLOW_KEEP_MODELS=1 on a machine with memory to spare, where holding them
+#: for the next job is worth more than the peak.
+KEEP_MODELS = os.getenv("DUBFLOW_KEEP_MODELS", "").strip().lower() in {"1", "true", "yes"}
 
 _queue: "queue.Queue[str]" = queue.Queue()
 _worker: Optional[threading.Thread] = None
@@ -207,14 +212,31 @@ def process(job_id: str) -> None:
             job["finished_at"] = now()
             write(job)
             return
-        job.setdefault("completed_stages", []).append(name)
+        _mark_completed(job, name)
         write(job)
+        if not KEEP_MODELS:
+            for released in pipeline.released_after(name, job):
+                slot(released).release()
 
     job["status"] = "completed"
     job["current_stage"] = None
     job.pop("error", None)
     job["finished_at"] = now()
     write(job)
+
+
+def _mark_completed(job: Dict, name: str) -> None:
+    """Record a finished stage once, however many times it runs.
+
+    A stage can run again - a retry, or an operator re-running one node - and an
+    appended duplicate makes the progress count exceed the number of stages.
+    """
+    completed = job.setdefault("completed_stages", [])
+    if name not in completed:
+        completed.append(name)
+    skipped = job.get("skipped_stages") or []
+    if name in skipped:
+        skipped.remove(name)
 
 
 def _loop() -> None:

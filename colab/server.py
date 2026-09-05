@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import sys
 import tempfile
@@ -72,7 +73,10 @@ def _service_error(_: Request, exc: ServiceError) -> JSONResponse:
 
 
 def _authorize(authorization: Optional[str]) -> None:
-    if AUTH_TOKEN and authorization != f"Bearer {AUTH_TOKEN}":
+    """Bearer check. The tunnel is public, so the comparison is constant-time."""
+    if not AUTH_TOKEN:
+        return
+    if not secrets.compare_digest(authorization or "", f"Bearer {AUTH_TOKEN}"):
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
 

@@ -37,6 +37,7 @@ for candidate in (APP_DIR, APP_DIR.parent):
 
 from dubflow_core import alignment as align  # noqa: E402
 from dubflow_core import languages as L  # noqa: E402
+from dubflow_core import mixing  # noqa: E402
 from dubflow_core import segments as segment_tools  # noqa: E402
 
 ROOT = Path(os.getenv("DATA_ROOT", APP_DIR.parent / "data/jobs"))
@@ -146,7 +147,14 @@ def _stage(job_id: str, name: str) -> Iterator[tuple]:
         # the reason would only exist in job.json and the container log.
         raise HTTPException(500, f"Stage '{name}' failed: {message}"[:1000]) from exc
     else:
-        job.setdefault("completed_stages", []).append(name)
+        # Record it once: a retried stage that appended twice made the progress
+        # count exceed the number of stages, and tripped the "already started"
+        # guard on a job that had only run one node.
+        completed = job.setdefault("completed_stages", [])
+        if name not in completed:
+            completed.append(name)
+        if name in job.get("skipped_stages", []):
+            job["skipped_stages"].remove(name)
         job["current_stage"] = None
         job["status"] = "completed" if name == FINAL_STAGE else "running"
         job.pop("error", None)
@@ -181,19 +189,6 @@ def _duration(path: Path) -> float:
     if result.returncode:
         raise RuntimeError((result.stderr or "ffprobe failed")[-1000:])
     return float(result.stdout.strip())
-
-
-def _atempo(speed: float) -> str:
-    """atempo takes 0.5-2.0 per stage, so chain them for anything wider."""
-    remaining, stages = float(speed), []
-    while remaining > 2.0:
-        stages.append("atempo=2.0")
-        remaining /= 2.0
-    while remaining < 0.5:
-        stages.append("atempo=0.5")
-        remaining /= 0.5
-    stages.append(f"atempo={remaining:.4f}")
-    return ",".join(stages)
 
 
 # ==========================================================================
@@ -921,7 +916,7 @@ def align_speech(request: JobRequest) -> dict:
             retimed = clip.with_suffix(".aligned.wav")
             _run([
                 "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-i", str(clip), "-af", _atempo(plan.speed),
+                "-i", str(clip), "-af", mixing.atempo_filter(plan.speed),
                 "-c:a", "pcm_s16le", str(retimed),
             ])
             retimed.replace(clip)
@@ -980,48 +975,33 @@ def mix(request: JobRequest) -> dict:
         command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
         for segment in voiced:
             command.extend(["-i", str(folder / segment["tts_file"])])
-
-        filters, labels = [], []
-        for index, segment in enumerate(voiced):
-            delay = max(0, round(float(segment["start"]) * 1000))
-            filters.append(
-                f"[{index}:a]aresample=48000,asetpts=PTS-STARTPTS,"
-                f"adelay={delay}|{delay}[s{index}]"
-            )
-            labels.append(f"[s{index}]")
         duration = float(job["duration_seconds"])
-        filters.append(
-            f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:normalize=0,"
-            f"apad=whole_dur={duration:.3f},atrim=0:{duration:.3f}[dub]"
-        )
         command.extend([
-            "-filter_complex", ";".join(filters), "-map", "[dub]",
-            "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(dubbed),
+            "-filter_complex",
+            mixing.dub_filtergraph([segment["start"] for segment in voiced], duration),
+            "-map", "[dub]", "-ar", str(mixing.MIX_SAMPLE_RATE), "-ac", "2",
+            "-c:a", "pcm_s16le", str(dubbed),
         ])
         _run(command)
 
         # Without separation the original soundtrack is kept at low volume,
         # producing a voice-over. With it the speech stem is already gone, so
-        # the background keeps its level and the dub sits on top of it.
+        # the background keeps its level and the dub sits on top of it. Both
+        # graphs live in dubflow_core so the two routes cannot drift apart.
         background_name = job["files"].get("background_audio")
         separated = bool(background_name)
         background = folder / (background_name or job["files"]["original_audio"])
-        background_gain = 1.0 if separated else 0.25
-        dub_gain = 1.0 if separated else 1.5
 
         final_audio = folder / "final.wav"
         _run([
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
             "-i", str(background), "-i", str(dubbed),
-            "-filter_complex",
-            f"[0:a]volume={background_gain}[background];[1:a]volume={dub_gain}[voice];"
-            f"[background][voice]amix=inputs=2:duration=first:normalize=0,"
-            f"loudnorm=I=-16:TP=-1.5:LRA=11[out]",
-            "-map", "[out]", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le",
-            str(final_audio),
+            "-filter_complex", mixing.blend_filtergraph(separated),
+            "-map", "[out]", "-ar", str(mixing.MIX_SAMPLE_RATE), "-ac", "2",
+            "-c:a", "pcm_s16le", str(final_audio),
         ])
         job["files"].update({"dubbed_audio": dubbed.name, "final_audio": final_audio.name})
-        job["mix_mode"] = "separated" if separated else "voice-over"
+        job["mix_mode"] = mixing.mix_mode(separated)
     return {
         "job_id": request.job_id,
         "stage": "mix",

@@ -11,11 +11,18 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional, Sequence
 
+from dubflow_core.mixing import MIX_SAMPLE_RATE, atempo_chain, atempo_filter
+
 from .errors import ProviderFailure
 
 ASR_SAMPLE_RATE = 16000
 SPEECH_SAMPLE_RATE = 24000
-MIX_SAMPLE_RATE = 48000
+
+__all__ = [
+    "ASR_SAMPLE_RATE", "SPEECH_SAMPLE_RATE", "MIX_SAMPLE_RATE", "Scratch",
+    "concatenate", "duration", "extract_window", "ffmpeg", "normalise_speech",
+    "retime", "run", "sample_rate", "write_waveform",
+]
 
 
 def run(command: Sequence[str]) -> str:
@@ -53,20 +60,6 @@ def sample_rate(path: Path) -> int:
         raise ProviderFailure(f"ffprobe found no audio stream in {path.name}") from exc
 
 
-def _atempo_chain(speed: float) -> List[str]:
-    """atempo only accepts 0.5-2.0 per stage, so chain them for wider speeds."""
-    remaining = float(speed)
-    stages: List[str] = []
-    while remaining > 2.0:
-        stages.append("atempo=2.0")
-        remaining /= 2.0
-    while remaining < 0.5:
-        stages.append("atempo=0.5")
-        remaining /= 0.5
-    stages.append(f"atempo={remaining:.4f}")
-    return stages
-
-
 def normalise_speech(
     source: Path,
     target: Path,
@@ -76,7 +69,7 @@ def normalise_speech(
     """Any engine's output becomes mono PCM at `rate`, optionally re-timed."""
     filters: List[str] = []
     if abs(speed - 1.0) > 1e-3:
-        filters.extend(_atempo_chain(speed))
+        filters.extend(atempo_chain(speed))
     filters.extend([f"aresample={rate}", "aformat=channel_layouts=mono"])
     ffmpeg([
         "-i", str(source), "-vn", "-af", ",".join(filters),
@@ -87,7 +80,7 @@ def normalise_speech(
 def retime(source: Path, target: Path, speed: float) -> None:
     """Change the speed of an existing clip without resampling it."""
     ffmpeg([
-        "-i", str(source), "-af", ",".join(_atempo_chain(speed)),
+        "-i", str(source), "-af", atempo_filter(speed),
         "-c:a", "pcm_s16le", str(target),
     ])
 

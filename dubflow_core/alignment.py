@@ -89,7 +89,9 @@ def plan_segments(
 ) -> List[Plan]:
     """One plan per segment, in the order given."""
     ordered = sorted(range(len(segments)), key=lambda index: float(segments[index]["start"]))
-    plans: List[Optional[Plan]] = [None] * len(segments)
+    #: One plan per segment, in the caller's order - callers zip the two lists,
+    #: so a shorter result would silently shift every plan onto the wrong line.
+    plans: List[Plan] = [Plan(1.0, "unmeasured", 0.0, 0.0)] * len(segments)
     for position, index in enumerate(ordered):
         segment = segments[index]
         following = segments[ordered[position + 1]] if position + 1 < len(ordered) else None
@@ -99,7 +101,7 @@ def plan_segments(
         )
         plans[index] = plan(segment.get("tts_duration_raw") or segment.get("tts_duration"),
                             window, limits)
-    return [item for item in plans if item is not None]
+    return plans
 
 
 def record(segment: Dict, chosen: Plan, final_duration: Optional[float]) -> Dict:

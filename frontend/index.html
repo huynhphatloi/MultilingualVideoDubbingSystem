@@ -886,13 +886,16 @@
       return forProvider.find(model => model.id === control.model.value) || null;
     }
 
-    function optionState(name, enabled, hint, checked) {
+    // `forced` is the state a disabled box must hold: false for a feature this
+    // session cannot do, true for one the chosen engine cannot do without. The
+    // two used to be decided in different places and contradict each other.
+    function optionState(name, enabled, hint, forced) {
       const box = toggles[name];
       const wrapper = box.closest(".option");
       box.disabled = !enabled;
       wrapper.classList.toggle("disabled", !enabled);
-      if (typeof checked === "boolean") box.checked = checked;
-      if (!enabled) box.checked = false;
+      if (!enabled) box.checked = forced === true;
+      else if (typeof forced === "boolean") box.checked = forced;
       const hintNode = wrapper.querySelector(".option-hint");
       if (hint) hintNode.textContent = hint;
     }
@@ -913,7 +916,6 @@
         optionState("voice_cloning", false, `${ttsModel.display_name} uses a stock voice`, false);
       } else if (ttsModel.reference_required) {
         optionState("voice_cloning", false, `${ttsModel.display_name} only speaks in a cloned voice`, true);
-        toggles.voice_cloning.checked = true;
       } else {
         optionState("voice_cloning", true, "Keep the original speaker's voice");
       }

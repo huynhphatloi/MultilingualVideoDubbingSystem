@@ -20,20 +20,32 @@ from dubflow_core import languages as L
 from providers.base import ModelSpec
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
-FALSE_VALUES = {"0", "false", "no", "off", ""}
+FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 def as_bool(value: Any, default: bool) -> bool:
+    """Parse a flag, treating an empty field as absent rather than false.
+
+    Multipart forms cannot omit a field: n8n sends every parameter it declares,
+    empty when the operator left it alone. Reading "" as false turned the
+    form's "Voice Cloning: Automatic" into "Voice Cloning: off", which then
+    refused every engine that only speaks in a cloned voice.
+    """
     if value is None:
         return default
     if isinstance(value, bool):
         return value
     text = str(value).strip().lower()
+    if not text:
+        return default
     if text in TRUE_VALUES:
         return True
     if text in FALSE_VALUES:
         return False
-    raise InvalidRequest(f"Expected a true/false value, got '{value}'")
+    raise InvalidRequest(
+        f"Expected a true/false value, got '{value}'. Use true/false, 1/0, "
+        f"yes/no or on/off, or leave the field empty for the default."
+    )
 
 
 def as_language(value: Any, field_name: str, allow_auto: bool = False) -> Optional[str]:
