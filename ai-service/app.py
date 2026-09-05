@@ -94,7 +94,7 @@ _DEFAULT_TTS_ENGINE = "mms"
 _CLONING_ENGINES = {"xtts_v2", "vixtts", "f5_vi", "f5_base"}
 #: Cloning quality plateaus well before this; longer clips only cost upload time.
 _REFERENCE_SECONDS = 12.0
-app = FastAPI(title="Simple Multilingual Dubbing API", version="2.0")
+app = FastAPI(title="Multilingual Dubbing API", version="2.0")
 
 
 class JobRequest(BaseModel):
@@ -793,7 +793,7 @@ def start_job(job_id: str) -> dict:
         raise HTTPException(
             503,
             "n8n did not accept the job. Open http://localhost:5678 and "
-            "activate 'Simple Multilingual Dubbing', then try again. "
+            "activate 'Multilingual Dubbing', then try again. "
             f"Technical detail: {str(exc)[:300]}",
         ) from exc
 

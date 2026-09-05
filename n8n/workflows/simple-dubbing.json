@@ -1,10 +1,10 @@
 {
   "id": "simpledubbing001",
-  "name": "Simple Multilingual Dubbing",
+  "name": "Multilingual Dubbing",
   "nodes": [
     {
       "parameters": {
-        "formTitle": "Simple Multilingual Video Dubbing",
+        "formTitle": "Multilingual Video Dubbing",
         "formDescription": "Upload a short video, then pick the languages and the three models to run it through. Keep this tab open: it shows the download links as soon as the seven stages finish. Only the 'mms' voice ships with the Colab notebook's base install - the others need their own pip install there.",
         "formFields": {
           "values": [

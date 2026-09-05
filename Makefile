@@ -32,7 +32,7 @@ activate: ## Activate the workflow and restart n8n so it registers the webhook
 	  $(COMPOSE) restart n8n; \
 	  $(COMPOSE) up -d --wait n8n; \
 	else \
-	  echo "Auto-activate unavailable. Open http://localhost:5678, open 'Simple Multilingual Dubbing', save it, and switch it to Active."; \
+	  echo "Auto-activate unavailable. Open http://localhost:5678, open 'Multilingual Dubbing', save it, and switch it to Active."; \
 	fi
 
 backends: ## Show which notebook backends are alive right now
