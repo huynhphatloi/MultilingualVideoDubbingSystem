@@ -193,7 +193,7 @@ def test_diarization_and_per_speaker_references(service, monkeypatch):
     diarized = json.loads(json.dumps(CONFIG))
     diarized["features"]["diarization"] = True
     diarized["features"]["voice_cloning"] = True
-    diarized["tts"] = {"provider": "xtts", "model": "vixtts", "voice_cloning": True}
+    diarized["tts"] = {"provider": "f5", "model": "f5_vi", "voice_cloning": True}
     diarized["diarization"] = {"provider": "pyannote", "model": "pyannote_3_1"}
     original = app._colab_request
 
@@ -246,7 +246,7 @@ def test_upload_refuses_a_configuration_the_backend_rejects(service, monkeypatch
         response = client.post(
             "/jobs/upload",
             files={"file": ("bad.mp4", handle, "video/mp4")},
-            data={"target_language": "vi", "tts_model": "xtts_v2"},
+            data={"target_language": "vi", "tts_model": "f5_base"},
         )
     assert response.status_code == 502
     assert "does not support target language" in response.json()["detail"]

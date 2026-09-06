@@ -57,9 +57,9 @@ def test_a_provider_alone_selects_its_first_model():
 
 
 def test_the_documented_invalid_combination_is_refused():
-    """target_language=vi with tts_model=xtts_v2 must fail with a clear error."""
+    """target_language=vi with tts_model=f5_base must fail with a clear error."""
     with pytest.raises(UnsupportedLanguage) as failure:
-        build(tts_model="xtts_v2")
+        build(tts_model="f5_base")
     assert "does not support target language 'vi'" in str(failure.value)
 
 
@@ -100,14 +100,14 @@ def test_voice_cloning_cannot_be_asked_of_an_engine_that_cannot_clone():
 
 
 def test_voice_cloning_defaults_to_on_for_engines_that_need_a_reference(all_installed):
-    built = config.build({"target_language": "vi", "tts_model": "vixtts"})
+    built = config.build({"target_language": "vi", "tts_model": "f5_vi"})
     assert built.features.voice_cloning is True
     assert built.public()["tts"]["voice_cloning"] is True
 
 
 def test_cloning_cannot_be_turned_off_for_a_clone_only_engine(all_installed):
     with pytest.raises(InvalidRequest) as failure:
-        build(tts_model="vixtts", enable_voice_cloning="false")
+        build(tts_model="f5_vi", enable_voice_cloning="false")
     assert "cannot be turned off" in str(failure.value)
 
 

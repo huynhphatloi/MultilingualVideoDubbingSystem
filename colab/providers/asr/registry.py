@@ -8,9 +8,6 @@ Language lists are copied from each model's own card or source, never inferred:
   text-only there and Sinhala is absent, so both are excluded.
 * MMS - the adapter files published in facebook/mms-1b-all. Eight application
   languages have no adapter, and five need a script-qualified adapter name.
-* SenseVoiceSmall - "Mandarin, Cantonese, English, Japanese, and Korean";
-  Cantonese has no code in the application table, so four remain.
-* Parakeet - v3 lists 25 European languages, v2 is English-only.
 """
 from __future__ import annotations
 
@@ -40,20 +37,6 @@ MMS = REGISTRY.add_provider(ProviderSpec(
     display_name="Meta MMS",
     homepage="https://huggingface.co/facebook/mms-1b-all",
     notes="1162 language adapters. CC-BY-NC-4.0: research use only.",
-))
-SENSEVOICE = REGISTRY.add_provider(ProviderSpec(
-    id="sensevoice",
-    task="asr",
-    display_name="SenseVoice",
-    homepage="https://github.com/FunAudioLLM/SenseVoice",
-    notes="Fast non-autoregressive recogniser for East Asian languages.",
-))
-PARAKEET = REGISTRY.add_provider(ProviderSpec(
-    id="parakeet",
-    task="asr",
-    display_name="NVIDIA Parakeet",
-    homepage="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
-    notes="Needs the NeMo toolkit, which is a large install.",
 ))
 
 #: checkpoint name -> (Hugging Face repo, English-only, label)
@@ -130,73 +113,6 @@ REGISTRY.add(ModelSpec(
     supports_language_detection=False,
     supports_timestamps=False,
     module="providers.asr.mms",
-))
-
-REGISTRY.add(ModelSpec(
-    id="sensevoice_small",
-    task="asr",
-    provider="sensevoice",
-    display_name="SenseVoiceSmall",
-    repo_id="FunAudioLLM/SenseVoiceSmall",
-    #: The card lists Mandarin, Cantonese, English, Japanese and Korean.
-    #: Cantonese has no code in this application's table.
-    languages=L.subset("zh", "en", "ja", "ko"),
-    multilingual=True,
-    license="FunASR Model Open Source License (see the model card)",
-    optional_package="funasr",
-    import_name="funasr",
-    experimental=True,
-    notes="Weights are under the FunASR model licence rather than a standard "
-          "open-source one. Emits rich transcription tags, which this provider "
-          "strips.",
-    supports_language_detection=True,
-    supports_timestamps=False,
-    module="providers.asr.sensevoice",
-))
-
-REGISTRY.add(ModelSpec(
-    id="parakeet_tdt_0.6b_v3",
-    task="asr",
-    provider="parakeet",
-    display_name="Parakeet TDT 0.6B v3 (European)",
-    repo_id="nvidia/parakeet-tdt-0.6b-v3",
-    #: The 25 languages the card lists, intersected with this table. Estonian,
-    #: Latvian, Lithuanian and Maltese are supported by the model but have no
-    #: code here.
-    languages=L.subset(
-        "bg", "hr", "cs", "da", "nl", "en", "fi", "fr", "de", "el", "hu", "it",
-        "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
-    ),
-    multilingual=True,
-    license="cc-by-4.0",
-    optional_package="nemo_toolkit[asr]",
-    import_name="nemo",
-    experimental=True,
-    notes="Transcribes without being told the language and returns segment "
-          "timestamps, but never reports which language it heard - so the "
-          "source language still has to be named for the translation stage. "
-          "NeMo is a heavy install that pins its own transformers version.",
-    supports_language_detection=False,
-    supports_timestamps=True,
-    module="providers.asr.parakeet",
-))
-
-REGISTRY.add(ModelSpec(
-    id="parakeet_tdt_0.6b_v2",
-    task="asr",
-    provider="parakeet",
-    display_name="Parakeet TDT 0.6B v2 (English)",
-    repo_id="nvidia/parakeet-tdt-0.6b-v2",
-    languages=L.subset("en"),
-    multilingual=False,
-    license="cc-by-4.0",
-    optional_package="nemo_toolkit[asr]",
-    import_name="nemo",
-    experimental=True,
-    notes="English only, by the model card.",
-    supports_language_detection=False,
-    supports_timestamps=True,
-    module="providers.asr.parakeet",
 ))
 
 #: The checkpoint used when a request omits the model. Kept as the old default.

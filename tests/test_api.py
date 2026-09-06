@@ -39,9 +39,9 @@ def test_health_keeps_the_keys_the_previous_version_published(client):
     assert set(payload["whisper_models"]) >= {"small", "large-v3", "large-v3-turbo"}
     assert set(payload["translation_engines"]) >= {"nllb", "seamless"}
     engines = payload["tts_engines"]
-    assert {"mms", "edge", "piper", "xtts_v2", "vixtts", "f5_vi", "f5_base"} <= set(engines)
+    assert {"mms", "edge", "f5_vi", "f5_base"} <= set(engines)
     assert engines["mms"]["available"] is True
-    assert engines["xtts_v2"]["needs_reference"] is True
+    assert engines["f5_vi"]["needs_reference"] is True
     assert payload["languages"][0]["code"]
 
 
@@ -63,7 +63,7 @@ def test_validate_accepts_the_old_parameter_names(client):
 
 def test_validate_refuses_an_impossible_pairing_with_a_readable_message(client):
     response = client.post("/validate", json={
-        "target_language": "vi", "tts_model": "xtts_v2"
+        "target_language": "vi", "tts_model": "f5_base"
     })
     assert response.status_code == 400
     assert "does not support target language 'vi'" in response.json()["detail"]

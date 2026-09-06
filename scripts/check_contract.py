@@ -72,9 +72,12 @@ def check_workflow() -> list:
         ]
         for field in form["parameters"]["formFields"]["values"]
     }
+    # The form need not offer a choice for every task - anything it leaves out
+    # falls through to the AI service's own default, which is the only place
+    # that knows what the running session installed. What it does offer has to
+    # be real, because a static form cannot check.
     for label, task in FORM_MODEL_FIELDS.items():
         if label not in fields:
-            problems.append(f"n8n form is missing the '{label}' field")
             continue
         known = set(providers.registry(task).ids())
         unknown = [value for value in fields[label] if value not in known]
@@ -83,6 +86,7 @@ def check_workflow() -> list:
                 f"n8n form field '{label}' offers ids the registry does not "
                 f"define: {sorted(unknown)}"
             )
+    # Same rule for the feature flags: absent is fine, present must be On/Off.
     for label in FORM_FLAG_FIELDS:
         values = {value.lower() for value in fields.get(label, [])}
         if not values <= {"on", "off", "automatic"}:

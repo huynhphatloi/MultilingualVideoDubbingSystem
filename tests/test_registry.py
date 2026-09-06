@@ -32,13 +32,13 @@ def test_the_old_engine_names_are_still_registered(registry):
         assert registry.registry("asr").has(checkpoint)
     for engine in ("nllb", "seamless"):
         assert registry.registry("translation").has(engine)
-    for voice in ("mms", "edge", "piper", "xtts_v2", "vixtts", "f5_vi", "f5_base"):
+    for voice in ("mms", "edge", "f5_vi", "f5_base"):
         assert registry.registry("tts").has(voice)
 
 
 def test_english_only_checkpoints_are_marked_as_such(registry):
     asr = registry.registry("asr")
-    for checkpoint in ("tiny.en", "distil-large-v3", "parakeet_tdt_0.6b_v2"):
+    for checkpoint in ("tiny.en", "distil-large-v3", "medium.en"):
         spec = asr.get(checkpoint)
         assert spec.languages == ("en",), checkpoint
         assert not spec.supports_language_detection
@@ -51,26 +51,24 @@ def test_only_models_that_report_the_language_claim_detection(registry):
     stage needs that answer."""
     asr = registry.registry("asr")
     assert asr.get("large-v3").supports_language_detection
-    assert asr.get("sensevoice_small").supports_language_detection
-    for silent in ("mms_asr", "seamless_asr", "parakeet_tdt_0.6b_v3"):
+    for silent in ("mms_asr", "seamless_asr"):
         assert not asr.get(silent).supports_language_detection, silent
 
 
 def test_models_without_timestamps_are_flagged(registry):
     asr = registry.registry("asr")
     assert asr.get("large-v3").supports_timestamps
-    for windowed in ("seamless_asr", "mms_asr", "sensevoice_small"):
+    for windowed in ("seamless_asr", "mms_asr"):
         assert not asr.get(windowed).supports_timestamps
 
 
 def test_documented_language_gaps(registry):
     """Coverage that was verified against each model's own card."""
     tts = registry.registry("tts")
-    assert "vi" not in tts.get("xtts_v2").languages
-    assert "vi" not in tts.get("chatterbox").languages
-    assert tts.get("vixtts").languages == ("vi",)
+    assert "vi" not in tts.get("f5_base").languages
     assert set(tts.get("f5_base").languages) == {"en", "zh"}
-    assert set(tts.get("kokoro").languages) == {"en", "es", "fr", "hi", "it", "ja", "pt", "zh"}
+    assert tts.get("f5_vi").languages == ("vi",)
+    assert "vi" in tts.get("mms").languages and "vi" in tts.get("edge").languages
     # MMS-TTS publishes no checkpoint for these, so the pipeline must not offer
     # them; before the registry existed the job failed with a 404 from the Hub.
     for missing in ("ja", "zh", "it", "cs", "da", "no"):
@@ -83,27 +81,24 @@ def test_documented_language_gaps(registry):
 
 def test_cloning_engines_declare_their_reference_need(registry):
     tts = registry.registry("tts")
-    for cloner in ("xtts_v2", "vixtts", "f5_vi", "f5_base", "cosyvoice2", "vieneu"):
+    for cloner in ("f5_vi", "f5_base"):
         spec = tts.get(cloner)
         assert spec.supports_voice_cloning and spec.reference_required, cloner
-    for stock in ("mms", "edge", "piper", "kokoro"):
+    for stock in ("mms", "edge"):
         assert not tts.get(stock).supports_voice_cloning, stock
-    # Chatterbox clones but also has a built-in voice, so a reference is optional.
-    chatterbox = tts.get("chatterbox")
-    assert chatterbox.supports_voice_cloning and not chatterbox.reference_required
 
 
 def test_licences_are_recorded_for_the_restricted_models(registry):
     assert registry.registry("asr").get("mms_asr").license == "cc-by-nc-4.0"
     assert registry.registry("translation").get("nllb").license == "cc-by-nc-4.0"
-    assert registry.registry("tts").get("kokoro").license == "apache-2.0"
-    assert registry.registry("tts").get("chatterbox").license == "mit"
+    assert registry.registry("tts").get("f5_vi").license == "cc-by-nc-4.0"
+    assert registry.registry("asr").get("large-v3").license == "mit"
 
 
 def test_unavailable_models_report_why_instead_of_disappearing(registry):
-    spec = registry.registry("tts").get("kokoro")
+    spec = registry.registry("tts").get("f5_vi")
     if not spec.available():
-        assert "kokoro" in (spec.unavailable_reason() or "")
+        assert "f5-tts" in (spec.unavailable_reason() or "")
         assert spec.public()["available"] is False
         assert spec.public()["installed"] is False
     with pytest.raises(MissingDependency):
@@ -133,8 +128,8 @@ def test_resolve_accepts_a_provider_a_model_or_both(registry):
 def test_language_rejection_names_a_working_alternative(registry):
     tts = registry.registry("tts")
     with pytest.raises(UnsupportedLanguage) as failure:
-        tts.require_language(tts.get("xtts_v2"), "vi", "target")
+        tts.require_language(tts.get("f5_base"), "vi", "target")
     message = str(failure.value)
     assert "does not support target language 'vi'" in message
-    assert "en, es, fr" in message
+    assert "en, zh" in message
 

@@ -5,7 +5,7 @@
     {
       "parameters": {
         "formTitle": "Multilingual Video Dubbing",
-        "formDescription": "Upload a short video and pick a target language. Every model field is optional: left blank the job uses Whisper small, NLLB-200 and the mms voice, which are the only ones the notebook installs by default. GET /capabilities on the AI service lists what the running session can actually load.",
+        "formDescription": "Upload a short video and pick a target language. Everything else uses the AI service's own defaults: Whisper small, NLLB-200, and voice cloning whenever the chosen voice only speaks in a cloned one. This form is static and cannot see which engines the running session installed - the web UI at localhost:8000 reads /capabilities and offers the full set.",
         "formFields": {
           "values": [
             {
@@ -253,60 +253,6 @@
               "requiredField": false
             },
             {
-              "fieldLabel": "Speech Recognition Model",
-              "fieldType": "dropdown",
-              "fieldOptions": {
-                "values": [
-                  {
-                    "option": "small - Whisper, the default: fast and multilingual"
-                  },
-                  {
-                    "option": "large-v3-turbo - Whisper, best quality for its speed"
-                  },
-                  {
-                    "option": "large-v3 - Whisper, best quality"
-                  },
-                  {
-                    "option": "medium - Whisper, a middle ground"
-                  },
-                  {
-                    "option": "distil-large-v3 - Whisper distilled, English only"
-                  },
-                  {
-                    "option": "seamless_asr - SeamlessM4T, no timestamps of its own"
-                  },
-                  {
-                    "option": "mms_asr - Meta MMS, needs an explicit source language"
-                  },
-                  {
-                    "option": "sensevoice_small - SenseVoice, Chinese/English/Japanese/Korean"
-                  },
-                  {
-                    "option": "parakeet_tdt_0.6b_v3 - NVIDIA Parakeet, European languages"
-                  }
-                ]
-              },
-              "requiredField": false
-            },
-            {
-              "fieldLabel": "Translation Model",
-              "fieldType": "dropdown",
-              "fieldOptions": {
-                "values": [
-                  {
-                    "option": "nllb - NLLB-200 600M, the default"
-                  },
-                  {
-                    "option": "nllb_1.3b - NLLB-200 1.3B, better and slower"
-                  },
-                  {
-                    "option": "seamless - SeamlessM4T medium"
-                  }
-                ]
-              },
-              "requiredField": false
-            },
-            {
               "fieldLabel": "Voice Model",
               "fieldType": "dropdown",
               "fieldOptions": {
@@ -318,97 +264,10 @@
                     "option": "edge - Microsoft Edge voices, most natural, needs internet"
                   },
                   {
-                    "option": "piper - Piper, fast local voices"
-                  },
-                  {
-                    "option": "xtts_v2 - XTTS v2 cloning, 17 languages, no Vietnamese"
-                  },
-                  {
-                    "option": "vixtts - viXTTS cloning, Vietnamese only"
-                  },
-                  {
                     "option": "f5_vi - F5-TTS cloning, Vietnamese only"
                   },
                   {
                     "option": "f5_base - F5-TTS cloning, English and Chinese"
-                  },
-                  {
-                    "option": "chatterbox - Chatterbox cloning, 23 languages, no Vietnamese"
-                  },
-                  {
-                    "option": "kokoro - Kokoro, 8 languages, stock voice"
-                  },
-                  {
-                    "option": "openvoice_v2 - OpenVoice V2 cloning, 6 languages"
-                  },
-                  {
-                    "option": "cosyvoice2 - CosyVoice 2 cloning, 9 languages"
-                  },
-                  {
-                    "option": "vieneu - VieNeu-TTS cloning, Vietnamese only"
-                  }
-                ]
-              },
-              "requiredField": false
-            },
-            {
-              "fieldLabel": "Speaker Diarization",
-              "fieldType": "dropdown",
-              "fieldOptions": {
-                "values": [
-                  {
-                    "option": "Off - one voice for the whole video"
-                  },
-                  {
-                    "option": "On - one voice per speaker (needs pyannote and an HF token)"
-                  }
-                ]
-              },
-              "requiredField": false
-            },
-            {
-              "fieldLabel": "Voice Cloning",
-              "fieldType": "dropdown",
-              "fieldOptions": {
-                "values": [
-                  {
-                    "option": "Automatic - on for engines that only speak in a cloned voice"
-                  },
-                  {
-                    "option": "On - clone each speaker (the engine must support it)"
-                  },
-                  {
-                    "option": "Off - use the engine's stock voice"
-                  }
-                ]
-              },
-              "requiredField": false
-            },
-            {
-              "fieldLabel": "Duration Alignment",
-              "fieldType": "dropdown",
-              "fieldOptions": {
-                "values": [
-                  {
-                    "option": "On - fit each line into its own time window"
-                  },
-                  {
-                    "option": "Off - leave every generated line at its natural length"
-                  }
-                ]
-              },
-              "requiredField": false
-            },
-            {
-              "fieldLabel": "Source Separation",
-              "fieldType": "dropdown",
-              "fieldOptions": {
-                "values": [
-                  {
-                    "option": "Off - keep the original track quiet underneath"
-                  },
-                  {
-                    "option": "On - dub over the separated background (needs demucs)"
                   }
                 ]
               },
@@ -428,7 +287,7 @@
         300
       ],
       "webhookId": "ee71780b-5bb5-4460-9fe4-604b12862001",
-      "notes": "Every dropdown option is something the Colab backend actually accepts.",
+      "notes": "Static form: only the choices that need no availability check.",
       "notesInFlow": true
     },
     {
@@ -467,7 +326,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'large-v3 - best quality'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst flag = (label, fallback) => {\n  const word = firstWord(label, '').toLowerCase();\n  if (word === 'on') return 'true';\n  if (word === 'off') return 'false';\n  return fallback;\n};\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// Only the model fields the operator actually chose are sent. Anything left\n// blank falls through to the AI service's own default, so the form never has\n// to know what that default is.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  asr_model: firstWord(form.json['Speech Recognition Model'], ''),\n  translation_model: firstWord(form.json['Translation Model'], ''),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n  enable_diarization: flag(form.json['Speaker Diarization'], 'false'),\n  enable_alignment: flag(form.json['Duration Alignment'], 'true'),\n  enable_source_separation: flag(form.json['Source Separation'], 'false'),\n};\n\n// 'Automatic' means: let the AI service decide from the engine's own\n// reference_required flag, which is what omitting the field does.\nconst cloning = flag(form.json['Voice Cloning'], '');\nif (cloning) payload.enable_voice_cloning = cloning;\n\n// The legacy names are still accepted by the API; the new ones are clearer.\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
+        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'mms - MMS-TTS, the default'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// Only what this form asks for. Every other setting - the recogniser, the\n// translator, diarization, alignment, separation and voice cloning - is left\n// out so the AI service applies its own default, which is the one place that\n// knows what this session can actually run.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n};\n\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
       },
       "id": "0bd18971-d5c4-4f07-8131-f84f8a377002",
       "name": "Prepare Upload",
@@ -502,32 +361,8 @@
               "value": "={{ $json.source_language || '' }}"
             },
             {
-              "name": "asr_model",
-              "value": "={{ $json.asr_model || '' }}"
-            },
-            {
-              "name": "translation_model",
-              "value": "={{ $json.translation_model || '' }}"
-            },
-            {
               "name": "tts_model",
               "value": "={{ $json.tts_model || '' }}"
-            },
-            {
-              "name": "enable_diarization",
-              "value": "={{ $json.enable_diarization || '' }}"
-            },
-            {
-              "name": "enable_voice_cloning",
-              "value": "={{ $json.enable_voice_cloning || '' }}"
-            },
-            {
-              "name": "enable_alignment",
-              "value": "={{ $json.enable_alignment || '' }}"
-            },
-            {
-              "name": "enable_source_separation",
-              "value": "={{ $json.enable_source_separation || '' }}"
             }
           ]
         },

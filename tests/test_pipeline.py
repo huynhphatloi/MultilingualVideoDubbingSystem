@@ -205,7 +205,7 @@ def test_alignment_can_be_switched_off(tmp_path, monkeypatch, stub_models):
 @ffmpeg
 def test_diarization_gives_each_speaker_their_own_reference(tmp_path, monkeypatch, stub_models):
     job, folder = run_job(tmp_path, monkeypatch, {
-        "target_language": "vi", "source_language": "en", "tts_model": "vixtts",
+        "target_language": "vi", "source_language": "en", "tts_model": "f5_vi",
         "enable_diarization": "true",
     })
 

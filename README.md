@@ -9,7 +9,7 @@ Colab GPU; nothing is downloaded onto the machine running the stack.
 | | |
 |---|---|
 | **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · Google Colab |
-| **Models** | 19 ASR · 3 translation · 13 TTS · 1 diarization · 2 separation |
+| **Models** | 16 ASR · 3 translation · 4 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
 | **Tests** | 116, no GPU and no model download required |
 | **Status** | Reference implementation. Demo-grade security — see [Limitations](#limitations) |
@@ -152,10 +152,9 @@ colab/                   AI service (runs on the Colab GPU)
   core/                  Errors, runtime (device, model slots), media, config
   providers/
     base.py              ModelSpec and Registry
-    asr/                 faster_whisper, seamless, mms, sensevoice, parakeet
+    asr/                 faster_whisper, seamless, mms
     translation/         nllb, seamless
-    tts/                 mms, edge, piper, xtts, f5, chatterbox, kokoro,
-                         openvoice, cosyvoice, vieneu
+    tts/                 mms, edge, f5
     diarization/         pyannote
     separation/          demucs
   pipeline/              The eleven stages and the runner
@@ -193,6 +192,12 @@ renders it, and [`scripts/check_contract.py`](scripts/check_contract.py) fails
 the one place that cannot fetch — it is a static form — so the contract check
 verifies that every id it offers exists in the registry.
 
+Because it cannot check what a session installed, the form asks only for what
+needs no such check: the video, the two languages and the voice. Everything
+else is omitted and the AI service applies its own default. The web UI at
+<http://localhost:8000> reads `/capabilities` and offers the full set, filtered
+to what the running session can actually load.
+
 ---
 
 ## Models
@@ -209,13 +214,6 @@ licence is recorded in the registry and reported by `/capabilities`.
 | `tiny.en` … `medium.en`, `distil-*` (7 English-only) | faster_whisper | English | ✓ | — | MIT | base |
 | `seamless_asr` | seamless | 48 (no Malay, Sinhala) | windowed | — | CC-BY-NC-4.0 | base |
 | `mms_asr` | mms | 49 (no Sinhala) | windowed | — | CC-BY-NC-4.0 | base |
-| `sensevoice_small` | sensevoice | zh, en, ja, ko | windowed | ✓ | FunASR model licence | `funasr` |
-| `parakeet_tdt_0.6b_v3` | parakeet | 21 European | ✓ | —¹ | CC-BY-4.0 | `nemo_toolkit[asr]` |
-| `parakeet_tdt_0.6b_v2` | parakeet | English | ✓ | — | CC-BY-4.0 | `nemo_toolkit[asr]` |
-
-¹ Parakeet v3 transcribes without being told the language but never reports
-which one it heard, and the translation stage needs that answer — so the source
-language still has to be named.
 
 A recogniser without timestamps is not excluded. The pipeline supplies windows,
 taken from the diarization turns when that stage ran and from a voice-activity
@@ -235,17 +233,8 @@ pass otherwise, and it produces the same canonical segments as Whisper.
 |---|---|---|---|---|---|
 | `mms` | 34 | — | — | CC-BY-NC-4.0 | base |
 | `edge` | 49 (no Armenian) | — | — | Microsoft service terms | `edge-tts` |
-| `piper` | 41 | — | — | MIT | `piper-tts` |
-| `xtts_v2` | 17 (**no Vietnamese**) | ✓ | required | CPML (non-commercial) | `coqui-tts` |
-| `vixtts` | Vietnamese | ✓ | required | CPML (non-commercial) | `coqui-tts` |
 | `f5_base` | en, zh | ✓ | required | CC-BY-NC-4.0 | `f5-tts` |
 | `f5_vi` | Vietnamese | ✓ | required | CC-BY-NC-4.0 | `f5-tts` |
-| `chatterbox` | 23 (**no Vietnamese**) | ✓ | optional | MIT | `chatterbox-tts` |
-| `chatterbox_en` | English | ✓ | optional | MIT | `chatterbox-tts` |
-| `kokoro` | en, es, fr, hi, it, ja, pt, zh | — | — | Apache-2.0 | `kokoro` + espeak-ng |
-| `openvoice_v2` | en, es, fr, zh, ja, ko | ✓ | required | MIT | OpenVoice + MeloTTS (git) |
-| `cosyvoice2` | zh, en, ja, ko, de, es, fr, it, ru | ✓ | required + transcript | Apache-2.0 | git clone |
-| `vieneu` | Vietnamese | ✓ | required | Apache-2.0 | `vieneu` |
 
 `mms` covers 34 of the 50 application languages: **Meta publishes no MMS-TTS
 checkpoint** for Japanese, Chinese, Italian, Czech, Danish, Norwegian, Urdu,
@@ -266,38 +255,35 @@ a working alternative, rather than failing on a 404 from the Hub.
 
 ### Optional model packages
 
-The notebook's first cell has one flag per optional package. The base install
-covers Whisper, SeamlessM4T and MMS recognition, both translation engines and
-the `mms` voice; nothing else is installed unless asked for.
+The base install covers Whisper, SeamlessM4T and MMS recognition, both
+translation engines and the `mms` voice. Four flags in the notebook's first cell
+add the rest of what this build registers, and all four are on, because the
+project's defaults — a Vietnamese dub with one voice per speaker — need them:
 
 ```python
-INSTALL_EDGE = True          INSTALL_SENSEVOICE = False
-INSTALL_PIPER = False        INSTALL_PARAKEET = False
-INSTALL_COQUI = False        INSTALL_DIARIZATION = False
-INSTALL_F5 = False           INSTALL_DEMUCS = False
-INSTALL_CHATTERBOX = False
-INSTALL_KOKORO = False
-INSTALL_OPENVOICE = False
-INSTALL_COSYVOICE = False
-INSTALL_VIENEU = False
+INSTALL_EDGE = True          # edge           - stock voice, 49 languages, no GPU
+INSTALL_F5 = True            # f5_vi, f5_base - voice cloning
+INSTALL_DIARIZATION = True   # pyannote.audio - one voice per speaker
+INSTALL_DEMUCS = True        # demucs         - separate speech from background
 ```
 
-### Dependency conflicts
+| Flag | Why it is on | Cost of turning it off |
+|---|---|---|
+| `INSTALL_EDGE` | The most natural stock voice, 49 languages | `mms` remains, at lower quality |
+| `INSTALL_F5` | `f5_vi` is the only voice here that clones Vietnamese | No voice cloning at all |
+| `INSTALL_DIARIZATION` | Without it every speaker shares one reference, so the per-speaker work has nothing to act on. **Needs `HF_TOKEN`** | One voice for the whole video |
+| `INSTALL_DEMUCS` | Lets the mix drop the original speech instead of ducking it | Voice-over mix only |
 
-Several of these packages pin their own `torch` or `transformers`. Enabling two
-that disagree is the usual cause of a Colab runtime that has to be restarted.
+Turning one off is not an error: its models then report `available: false` with
+the reason, `/capabilities` says so, the web UI disables them, and a job that
+asks for one is refused at creation rather than failing mid-pipeline.
 
-| Do not combine | Reason |
-|---|---|
-| `INSTALL_COQUI` + `INSTALL_F5` | Both pin `torch` and `transformers`, in different directions |
-| `INSTALL_COQUI` + `INSTALL_PARAKEET` | NeMo pins `transformers` against coqui-tts |
-| `INSTALL_CHATTERBOX` + anything else heavy | Pins `transformers`; keep it with the base install |
-| `INSTALL_SENSEVOICE` + anything else heavy | `funasr` pins `torch` |
-| `INSTALL_VIENEU` + anything else heavy | Pins its own `transformers` |
+### Dependency notes
 
-`INSTALL_EDGE`, `INSTALL_PIPER`, `INSTALL_KOKORO`, `INSTALL_DIARIZATION` and
-`INSTALL_DEMUCS` are safe alongside the base install. `INSTALL_OPENVOICE` and
-`INSTALL_COSYVOICE` install from git and are the most fragile of the set.
+`f5-tts` pins its own `torch` and `torchaudio`, so the first `Run all` in a
+fresh session can end with Colab asking to restart the runtime. Restart and run
+all again; the second pass finds the packages already installed. The other three
+are safe alongside the base install.
 
 The base environment stays reproducible: `colab/requirements.txt` pins seven
 packages and never touches torch, which Colab ships matched to its own CUDA.
@@ -343,9 +329,6 @@ Set in the notebook before the launch cell.
 | `TRANSLATION_MODEL` | `facebook/nllb-200-distilled-600M` | Override the default NLLB checkpoint |
 | `SEAMLESS_MODEL` | `facebook/hf-seamless-m4t-medium` | Override the SeamlessM4T checkpoint |
 | `F5_VI_MODEL` | `hynt/F5-TTS-Vietnamese-ViVoice` | Override the F5 Vietnamese checkpoint |
-| `COSYVOICE_ROOT` | `/content/CosyVoice` | CosyVoice checkout |
-| `COSYVOICE_MODEL` | downloaded | Local CosyVoice weights |
-| `OPENVOICE_CHECKPOINTS` | downloaded | Local OpenVoice V2 checkpoints |
 
 ### Memory
 
@@ -408,8 +391,8 @@ curl "$COLAB_API_URL/capabilities" -H "Authorization: Bearer $COLAB_API_TOKEN"
 # Check a configuration without creating a job.
 curl -X POST "$COLAB_API_URL/validate" -H "Authorization: Bearer $COLAB_API_TOKEN" \
      -H 'Content-Type: application/json' \
-     -d '{"target_language":"vi","tts_model":"xtts_v2"}'
-# 400: 'XTTS v2' (xtts_v2) does not support target language 'vi'. ...
+     -d '{"target_language":"vi","tts_model":"f5_base"}'
+# 400: 'F5-TTS v1 base' (f5_base) does not support target language 'vi'. ...
 
 # Dub a video end to end.
 curl -X POST "$COLAB_API_URL/jobs" -H "Authorization: Bearer $COLAB_API_TOKEN" \
@@ -604,17 +587,13 @@ reported by `/capabilities`. They are **not** interchangeable:
 
 | Licence | Models | Implication |
 |---|---|---|
-| MIT / Apache-2.0 | Whisper, Piper, Chatterbox, Kokoro, CosyVoice 2, VieNeu-TTS, pyannote, Demucs | Commercial use permitted, subject to each licence |
-| CC-BY-4.0 | Parakeet | Commercial use with attribution |
+| MIT | Whisper, pyannote, Demucs | Commercial use permitted, subject to each licence |
 | CC-BY-NC-4.0 | NLLB-200, SeamlessM4T, MMS (ASR and TTS), F5-TTS | **Non-commercial only** |
-| CPML | XTTS-v2, viXTTS | **Non-commercial only** |
-| FunASR model licence | SenseVoiceSmall | See the model card |
 | Service terms | Edge TTS | Sends text to a Microsoft endpoint — unsuitable for confidential material |
 
 **Every translation model in this build is CC-BY-NC-4.0**, so any end-to-end dub
 produced with it is non-commercial regardless of which voice was used.
-Community fine-tunes — `vixtts`, `f5_vi`, `vieneu`, `sensevoice_small` — are
-marked `experimental` in the registry.
+`f5_vi` is a community fine-tune and is marked `experimental` in the registry.
 
 Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper),
 [NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M),
