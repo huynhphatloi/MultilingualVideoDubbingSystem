@@ -1,5 +1,5 @@
 {
-  "id": "simpledubbing001",
+  "id": "MultilingualVideoDubbingSystem",
   "name": "Multilingual Dubbing",
   "nodes": [
     {
@@ -269,7 +269,10 @@
             }
           ]
         },
-        "options": {},
+        "options": {
+          "buttonLabel": "Start dubbing",
+          "customCss": ":root {\n  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n  --font-size-body: 15px;\n  --font-size-label: 14px;\n  --font-size-input: 15px;\n  --font-size-header: 30px;\n  --font-size-paragraph: 15px;\n  --font-size-link: 14px;\n  --font-size-error: 13px;\n  --font-size-subheader: 15px;\n  --font-weight-normal: 400;\n  --font-weight-bold: 600;\n  --color-background: #f2f0e8;\n  --color-card-bg: #fffefa;\n  --color-card-border: #17231d;\n  --color-card-shadow: rgba(23, 35, 29, 0.12);\n  --color-header: #17231d;\n  --color-header-subtext: #536159;\n  --color-label: #17231d;\n  --color-input-border: #bfc5be;\n  --color-input-text: #17231d;\n  --color-focus-border: #146b5b;\n  --color-submit-btn-bg: #d8ff58;\n  --color-submit-btn-text: #1e2b00;\n  --color-required: #146b5b;\n  --border-radius-card: 16px;\n  --border-radius-input: 9px;\n  --container-width: 620px;\n  --submit-btn-height: 52px;\n  --padding-card: 32px;\n  --box-shadow-card: 10px 10px 0 rgba(216, 255, 88, 0.8);\n}\nbody { background-image: linear-gradient(rgba(23,35,29,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(23,35,29,.035) 1px, transparent 1px); background-size: 32px 32px; -webkit-font-smoothing: antialiased; }"
+        },
         "responseMode": "onReceived"
       },
       "id": "0bd18971-d5c4-4f07-8131-f84f8a377001",
@@ -277,8 +280,8 @@
       "type": "n8n-nodes-base.formTrigger",
       "typeVersion": 2.2,
       "position": [
-        -1060,
-        300
+        -1240,
+        160
       ],
       "webhookId": "ee71780b-5bb5-4460-9fe4-604b12862001",
       "notes": "Static form: only the choices that need no availability check.",
@@ -296,8 +299,8 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        -620,
-        620
+        -1240,
+        520
       ],
       "webhookId": "9cde2800-dc5b-41c8-933e-bde73b995011",
       "notes": "The demo frontend calls this webhook after FastAPI stores the uploaded video.",
@@ -312,8 +315,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -400,
-        620
+        -980,
+        520
       ],
       "notes": "Normalizes the webhook payload before the visible processing stages.",
       "notesInFlow": false
@@ -327,8 +330,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -840,
-        300
+        -980,
+        160
       ],
       "notes": "Technical adapter: dropdown labels to language codes, and a predictable binary key.",
       "notesInFlow": false
@@ -369,8 +372,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -620,
-        300
+        -720,
+        160
       ],
       "notes": "Creates data/jobs/<job_id> and stores the source video.",
       "notesInFlow": true
@@ -391,8 +394,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -400,
-        300
+        -420,
+        160
       ],
       "notes": "FFmpeg writes a 16 kHz mono file for the models and a 48 kHz soundtrack for the mix.",
       "notesInFlow": true
@@ -413,8 +416,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -180,
-        300
+        -160,
+        160
       ],
       "notes": "Optional. pyannote on the AI backend returns speaker turns; skipped when the job did not ask for it.",
       "notesInFlow": true
@@ -435,8 +438,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        40,
-        300
+        100,
+        160
       ],
       "notes": "The chosen ASR model on the AI backend. Recognisers without timestamps are given the diarization turns as windows.",
       "notesInFlow": true
@@ -457,8 +460,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        260,
-        300
+        360,
+        160
       ],
       "notes": "Local: each segment takes the speaker it overlaps most. No model involved.",
       "notesInFlow": true
@@ -479,8 +482,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
-        300
+        -420,
+        560
       ],
       "notes": "The chosen translation model on the AI backend. Skipped when source and target match.",
       "notesInFlow": true
@@ -501,8 +504,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        920,
-        300
+        -160,
+        560
       ],
       "notes": "The chosen TTS model on the AI backend, one call per segment.",
       "notesInFlow": true
@@ -523,8 +526,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -400,
-        520
+        100,
+        560
       ],
       "notes": "Optional. Local FFmpeg fits each line into its own time window, within the configured speed limits.",
       "notesInFlow": true
@@ -545,8 +548,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -180,
-        520
+        360,
+        560
       ],
       "notes": "Optional. Demucs on the AI backend returns the background stem so the dub is not laid over the original voice.",
       "notesInFlow": true
@@ -567,8 +570,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        40,
-        520
+        700,
+        560
       ],
       "notes": "Local FFmpeg places every clip at its timestamp and mixes it with the background.",
       "notesInFlow": true
@@ -589,8 +592,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
-        520
+        960,
+        560
       ],
       "notes": "Local FFmpeg muxes the dubbed audio and the subtitles back onto the video.",
       "notesInFlow": true
@@ -693,8 +696,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        700,
-        520
+        1220,
+        560
       ],
       "notes": "Open these URLs in the browser after the execution is green.",
       "notesInFlow": true
@@ -729,8 +732,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        920,
-        520
+        1220,
+        800
       ],
       "notes": "The frontend app polls for itself, so only form runs get the ending page.",
       "notesInFlow": true
@@ -739,21 +742,88 @@
       "parameters": {
         "operation": "completion",
         "respondWith": "showText",
-        "responseText": "=<h2>Your dubbed video is ready</h2>\n<p>Job <code>{{ $json.job_id }}</code> &mdash; {{ $json.source_language }} to {{ $json.target_language }}, {{ $json.segments }} segments, speakers: {{ $json.speakers || 'SPEAKER_00' }}.</p>\n<ul>\n<li>Recognised with <b>{{ $json.asr_model }}</b></li>\n<li>Translated with <b>{{ $json.translation_model }}</b></li>\n<li>Voiced by <b>{{ $json.voice_used || $json.tts_model }}</b></li>\n<li>Mixed as <b>{{ $json.mix_mode }}</b>, alignment {{ $json.alignment }}</li>\n</ul>\n<ul>\n<li><a href=\"{{ $json.download_video }}\" target=\"_blank\" rel=\"noopener\">Download the dubbed video (MP4, subtitles included)</a></li>\n<li><a href=\"{{ $json.download_subtitle }}\" target=\"_blank\" rel=\"noopener\">Download the translated subtitles (SRT)</a></li>\n</ul>\n<p>Both links keep working while the stack is up. The job folder is <code>data/jobs/{{ $json.job_id }}</code>.</p>",
+        "responseText": "=<p><strong>EXPORT READY</strong></p>\n<h2>Your dubbed video is ready</h2>\n<p>Job <code>{{ $json.job_id }}</code> translated {{ $json.source_language }} to {{ $json.target_language }} across {{ $json.segments }} timed segments.</p>\n<h3>Run summary</h3>\n<ul>\n<li>Speech recognition: <b>{{ $json.asr_model }}</b></li>\n<li>Translation: <b>{{ $json.translation_model }}</b></li>\n<li>Voice: <b>{{ $json.voice_used || $json.tts_model }}</b></li>\n<li>Speakers: <b>{{ $json.speakers || 'SPEAKER_00' }}</b></li>\n<li>Audio mix: <b>{{ $json.mix_mode }}</b></li>\n</ul>\n<h3>Downloads</h3>\n<p><a href=\"{{ $json.download_video }}\" target=\"_blank\" rel=\"noopener\"><b>Download dubbed video (MP4)</b></a></p>\n<p><a href=\"{{ $json.download_subtitle }}\" target=\"_blank\" rel=\"noopener\">Download translated subtitles (SRT)</a></p>\n<p><small>Files remain available while the DubFlow stack is running.</small></p>",
         "limitWaitTime": false,
-        "options": {}
+        "options": {
+          "formTitle": "DubFlow export",
+          "customCss": ":root {\n  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n  --font-size-body: 15px;\n  --font-size-html-h2: 30px;\n  --font-size-html-h3: 16px;\n  --font-size-html-h4: 15px;\n  --font-size-link: 15px;\n  --font-weight-normal: 400;\n  --font-weight-bold: 600;\n  --color-background: #f2f0e8;\n  --color-card-bg: #fffefa;\n  --color-card-border: #17231d;\n  --color-card-shadow: rgba(23, 35, 29, 0.12);\n  --color-html-text: #536159;\n  --color-html-link: #146b5b;\n  --border-radius-card: 16px;\n  --container-width: 620px;\n  --card-padding: 32px;\n  --box-shadow-card: 10px 10px 0 rgba(216, 255, 88, 0.8);\n}\nbody { background-image: linear-gradient(rgba(23,35,29,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(23,35,29,.035) 1px, transparent 1px); background-size: 32px 32px; -webkit-font-smoothing: antialiased; }\ncode { color: #17231d; background: #eef0e8; padding: 2px 5px; border-radius: 4px; }"
+        }
       },
       "id": "0bd18971-d5c4-4f07-8131-f84f8a377014",
       "name": "Download Page",
       "type": "n8n-nodes-base.form",
       "typeVersion": 1,
       "position": [
-        1140,
-        420
+        1480,
+        700
       ],
       "webhookId": "ee71780b-5bb5-4460-9fe4-604b12862002",
-      "notes": "Replaces the form with the download links once stage 7 is done.",
+      "notes": "Replaces the form with the download links once all 11 visible stages are done.",
       "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "content": "# 01 · ENTRY POINTS\nTwo supported ways to create the same job.\n\n**Public form** uploads the video here.\n\n**Frontend app** uploads through FastAPI, then sends only the `job_id`.",
+        "height": 760,
+        "width": 800,
+        "color": 7
+      },
+      "id": "note-entry-points",
+      "name": "01 · Entry points",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1360,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# 02 · UNDERSTAND THE SOURCE\nPrepare model-ready audio, identify speakers when enabled, transcribe speech, then merge speaker turns with timestamped text.",
+        "height": 370,
+        "width": 1100,
+        "color": 5
+      },
+      "id": "note-understand-source",
+      "name": "02 · Understand source",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# 03 · BUILD THE DUB\nTranslate each segment, generate speech, fit it back into the original time window and optionally recover the background audio.",
+        "height": 370,
+        "width": 1100,
+        "color": 4
+      },
+      "id": "note-build-dub",
+      "name": "03 · Build dub",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# 04 · MIX, RENDER & DELIVER\nCompose the final soundtrack, mux it with video and subtitles, then return results to the frontend or the public n8n form.",
+        "height": 560,
+        "width": 1120,
+        "color": 3
+      },
+      "id": "note-deliver-result",
+      "name": "04 · Deliver result",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        620,
+        420
+      ]
     }
   ],
   "connections": {
