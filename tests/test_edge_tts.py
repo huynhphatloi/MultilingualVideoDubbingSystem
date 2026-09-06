@@ -24,27 +24,23 @@ def provider(monkeypatch) -> EdgeProvider:  # noqa: ANN001
     ))
 
 
-def test_single_voice_mode_keeps_the_existing_female_default(monkeypatch):
+def test_no_speaker_uses_the_existing_female_default(monkeypatch):
     engine = provider(monkeypatch)
-    assert engine.voice_for("vi", "SPEAKER_01", multi_voice=False) == (
-        "vi-VN-HoaiMyNeural"
-    )
+    assert engine.voice_for("vi") == "vi-VN-HoaiMyNeural"
 
 
-def test_multi_voice_assigns_a_stable_voice_to_each_pyannote_speaker(monkeypatch):
+def test_each_pyannote_speaker_gets_a_stable_voice(monkeypatch):
     engine = provider(monkeypatch)
-    first = engine.voice_for("vi", "SPEAKER_00", multi_voice=True)
-    second = engine.voice_for("vi", "SPEAKER_01", multi_voice=True)
+    first = engine.voice_for("vi", "SPEAKER_00")
+    second = engine.voice_for("vi", "SPEAKER_01")
 
     assert first != second
-    assert engine.voice_for("vi", "SPEAKER_00", multi_voice=True) == first
-    assert engine.voice_for("vi", "SPEAKER_01", multi_voice=True) == second
+    assert engine.voice_for("vi", "SPEAKER_00") == first
+    assert engine.voice_for("vi", "SPEAKER_01") == second
 
 
-def test_multi_voice_reuses_voices_deterministically_when_speakers_outnumber_them(
+def test_speakers_reuse_voices_deterministically_when_the_pool_is_exhausted(
     monkeypatch,
 ):
     engine = provider(monkeypatch)
-    assert engine.voice_for("vi", "SPEAKER_02", multi_voice=True) == engine.voice_for(
-        "vi", "SPEAKER_00", multi_voice=True
-    )
+    assert engine.voice_for("vi", "SPEAKER_02") == engine.voice_for("vi", "SPEAKER_00")

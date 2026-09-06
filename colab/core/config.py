@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional
 
 import providers
-from core import feature_flags
 from core.errors import InvalidRequest
 from dubflow_core import alignment as align
 from dubflow_core import languages as L
@@ -50,17 +49,15 @@ def as_language(value: Any, field_name: str, allow_auto: bool = False) -> Option
 
 @dataclass
 class Features:
-    diarization: bool = False
+    diarization: bool = True
     alignment: bool = True
     source_separation: bool = False
-    multi_voice: bool = False
 
     def public(self) -> Dict[str, bool]:
         return {
             "diarization": self.diarization,
             "alignment": self.alignment,
             "source_separation": self.source_separation,
-            "multi_voice": self.multi_voice,
         }
 
 
@@ -135,38 +132,23 @@ def _speakers(values: Mapping[str, Any], name: str) -> Optional[int]:
     return count
 
 
-def build(
-    values: Mapping[str, Any],
-    *,
-    multi_voice: Optional[bool] = None,
-) -> JobConfig:
+def build(values: Mapping[str, Any]) -> JobConfig:
     """Validate request values and resolve each selected model."""
-    if multi_voice is None:
-        multi_voice = feature_flags.multi_voice_enabled()
     target = as_language(values.get("target_language", "vi"), "target_language")
     source = as_language(values.get("source_language"), "source_language", allow_auto=True)
 
-    asr_spec = providers.find(
-        "asr",
-        _first(values, "asr_provider"),
-        _first(values, "asr_model") or providers.DEFAULTS["asr"],
-    )
-    translation_spec = providers.find(
-        "translation",
-        _first(values, "translation_provider"),
-        _first(values, "translation_model") or providers.DEFAULTS["translation"],
-    )
-    tts_spec = providers.find(
-        "tts",
-        _first(values, "tts_provider"),
-        _first(values, "tts_model") or ("edge" if multi_voice else providers.DEFAULTS["tts"]),
-    )
-
-    if multi_voice and not tts_spec.supports_multispeaker:
-        raise InvalidRequest(
-            "Multi-voice mode requires a TTS model with multi-speaker support. "
-            "Choose Edge TTS, or start without DUBFLOW_MULTI_VOICE=true."
+    def selected(task: str) -> ModelSpec:
+        provider = _first(values, f"{task}_provider")
+        model = _first(values, f"{task}_model")
+        return providers.find(
+            task,
+            provider,
+            model or (None if provider else providers.DEFAULTS[task]),
         )
+
+    asr_spec = selected("asr")
+    translation_spec = selected("translation")
+    tts_spec = selected("tts")
 
     # Report language mismatches before missing optional packages.
     if source is None and not asr_spec.supports_language_detection:
@@ -191,20 +173,16 @@ def build(
         providers.registry(task).require_available(spec)
 
     features = Features(
-        diarization=multi_voice or as_bool(values.get("enable_diarization"), False),
         alignment=as_bool(values.get("enable_alignment"), True),
         source_separation=as_bool(values.get("enable_source_separation"), False),
-        multi_voice=multi_voice,
     )
 
-    diarization_spec = None
-    if features.diarization:
-        diarization_spec = providers.find(
-            "diarization",
-            _first(values, "diarization_provider"),
-            _first(values, "diarization_model") or providers.DEFAULTS["diarization"],
-        )
-        providers.registry("diarization").require_available(diarization_spec)
+    diarization_spec = providers.find(
+        "diarization",
+        _first(values, "diarization_provider"),
+        _first(values, "diarization_model") or providers.DEFAULTS["diarization"],
+    )
+    providers.registry("diarization").require_available(diarization_spec)
 
     separation_spec = None
     if features.source_separation:

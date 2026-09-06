@@ -60,5 +60,5 @@ REGISTRY.add(ModelSpec(
     module="providers.tts.edge",
 ))
 
-DEFAULT_MODEL = "mms"
+DEFAULT_MODEL = "edge"
 ALIASES: dict = {}

@@ -10,7 +10,6 @@ for entry in (ROOT, ROOT / "colab"):
         sys.path.insert(0, str(entry))
 
 os.environ.setdefault("DUBFLOW_DEVICE", "cpu")
-os.environ.setdefault("DUBFLOW_MULTI_VOICE", "false")
 
 import pytest  # noqa: E402
 

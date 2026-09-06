@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from core import feature_flags
 from core.runtime import device, loaded
 from dubflow_core import languages as L
 from providers import asr, diarization, separation, translation, tts
@@ -37,16 +36,11 @@ def find(task: str, provider: Optional[str], model: Optional[str]) -> ModelSpec:
 
 
 def capabilities() -> Dict:
-    flags = feature_flags.public()
-    defaults = dict(DEFAULTS)
-    if flags["multi_voice"]:
-        defaults["tts"] = "edge"
     return {
         "device": device(),
         "languages": L.listing(),
         "tasks": list(REGISTRIES),
-        "defaults": defaults,
-        "feature_flags": flags,
+        "defaults": dict(DEFAULTS),
         "providers": {task: entry.public() for task, entry in REGISTRIES.items()},
         "loaded": loaded(),
     }

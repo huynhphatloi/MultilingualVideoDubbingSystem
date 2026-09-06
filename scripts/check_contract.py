@@ -23,7 +23,7 @@ FORM_MODEL_FIELDS = {
     "Voice Model": "tts",
 }
 FORM_FLAG_FIELDS = (
-    "Speaker Diarization", "Duration Alignment", "Source Separation",
+    "Duration Alignment", "Source Separation",
 )
 
 

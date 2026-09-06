@@ -32,9 +32,10 @@ CONFIG = {
     "target_language": "vi",
     "asr": {"provider": "faster_whisper", "model": "small"},
     "translation": {"provider": "nllb", "model": "nllb"},
-    "tts": {"provider": "mms", "model": "mms"},
-    "features": {"diarization": False, "alignment": True,
-                 "source_separation": False, "multi_voice": False},
+    "tts": {"provider": "edge", "model": "edge"},
+    "features": {"diarization": True, "alignment": True,
+                 "source_separation": False},
+    "diarization": {"provider": "pyannote", "model": "pyannote_3_1"},
     "alignment_limits": {"min_speed": 0.75, "max_speed": 1.35, "tolerance": 0.05,
                          "allow_stretch": False},
 }
@@ -144,14 +145,14 @@ def test_the_whole_n8n_route_runs(service):
         "synthesize", "align", "separate", "mix", "render",
     ]}
 
-    for optional in ("diarize", "separate"):
-        assert results[optional]["status"] == "skipped", optional
+    assert results["diarize"]["status"] == "completed"
+    assert results["separate"]["status"] == "skipped"
     assert results["mix"]["mode"] == "voice-over"
 
     job = client.get(f"/jobs/{job_id}").json()
     assert job["status"] == "completed"
     assert job["completed_stages"] == [
-        "upload", "extract", "transcribe", "merge_segments", "translate",
+        "upload", "extract", "diarize", "transcribe", "merge_segments", "translate",
         "synthesize", "align", "mix", "render",
     ]
     output = tmp_path / job_id / job["files"]["output"]
@@ -179,9 +180,7 @@ def test_alignment_retimes_the_clip_that_overruns(service):
 
 @ffmpeg
 def test_diarization_labels_every_segment_with_its_speaker(service, monkeypatch):
-    """Diarization no longer changes what the dub sounds like - no voice here
-    varies by speaker - but it still decides who each line belongs to, which is
-    what the transcript, the SRT and any future multi-voice engine read."""
+    """Diarization labels are carried into the per-speaker voice stage."""
     client, calls, tmp_path = service
     import app
 
@@ -214,12 +213,12 @@ def test_diarization_labels_every_segment_with_its_speaker(service, monkeypatch)
 
 
 @ffmpeg
-def test_multi_voice_sends_speaker_ids_and_records_the_voice_map(service, monkeypatch):
+def test_synthesis_sends_speaker_ids_and_records_the_voice_map(service, monkeypatch):
     client, calls, tmp_path = service
     import app
 
     configured = json.loads(json.dumps(CONFIG))
-    configured["features"].update({"diarization": True, "multi_voice": True})
+    configured["features"]["diarization"] = True
     configured["diarization"] = {"provider": "pyannote", "model": "pyannote_3_1"}
     configured["tts"] = {"provider": "edge", "model": "edge"}
     original = app._colab_request
@@ -239,7 +238,9 @@ def test_multi_voice_sends_speaker_ids_and_records_the_voice_map(service, monkey
     job = client.get(f"/jobs/{job_id}").json()
     voice_calls = [data for path, data in calls if path == "/synthesize"]
     assert [call["speaker_id"] for call in voice_calls] == ["SPEAKER_00", "SPEAKER_01"]
-    assert {call["multi_voice"] for call in voice_calls} == {"true"}
+    assert all(set(call) == {
+        "text", "language", "speed", "provider", "model", "speaker_id"
+    } for call in voice_calls)
     assert job["speaker_voice_map"] == {
         "SPEAKER_00": "voice-SPEAKER_00",
         "SPEAKER_01": "voice-SPEAKER_01",
@@ -328,8 +329,8 @@ def test_progress_follows_the_stages_that_ran(service):
 
     row = next(r for r in client.get("/jobs").json()["jobs"] if r["job_id"] == job_id)
     assert "extract" in row["completed_stages"]
-    assert "diarize" in row["skipped_stages"]
-    assert row["progress"] == "2/10"
+    assert "diarize" in row["completed_stages"]
+    assert row["progress"] == "3/11"
     assert 0 < row["percent"] <= 100
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import inspect
 import json
 
 import pytest
@@ -22,7 +23,10 @@ def test_capabilities_is_the_source_of_truth(client):
         "asr", "translation", "tts", "diarization", "separation"
     ]
     assert payload["defaults"]["asr"] == "small"
-    assert payload["feature_flags"]["multi_voice"] is False
+    assert payload["defaults"]["tts"] == "edge"
+    assert set(payload) == {
+        "device", "languages", "tasks", "defaults", "providers", "loaded", "version"
+    }
     asr = {
         model["id"]: model
         for group in payload["providers"]["asr"] for model in group["models"]
@@ -35,11 +39,11 @@ def test_capabilities_is_the_source_of_truth(client):
 def test_health_reports_runtime_state(client):
     payload = client.get("/health").json()
     assert payload["status"] == "ready"
-    assert payload["version"] == "4.0"
+    assert payload["version"] == "5.0"
     assert set(payload["services"]) == {
         "transcription", "translation", "speech", "diarization", "separation"
     }
-    assert payload["feature_flags"]["multi_voice"] is False
+    assert set(payload) == {"status", "version", "device", "services", "loaded"}
     assert set(payload["loaded"]) == {
         "asr", "translation", "tts", "diarization", "separation"
     }
@@ -50,7 +54,7 @@ def test_languages_endpoint(client):
     assert {"en", "vi", "ja"} <= codes
 
 
-def test_validate_accepts_model_choices(client):
+def test_validate_accepts_model_choices(client, all_installed):
     response = client.post("/validate", json={
         "target_language": "vi", "asr_model": "large-v3",
         "translation_model": "nllb", "tts_model": "mms",
@@ -59,6 +63,7 @@ def test_validate_accepts_model_choices(client):
     config = response.json()["config"]
     assert config["asr"]["model"] == "large-v3"
     assert config["features"]["alignment"] is True
+    assert config["features"]["diarization"] is True
 
 
 def test_validate_refuses_an_impossible_pairing_with_a_readable_message(client):
@@ -127,12 +132,14 @@ def test_synthesize_refuses_a_language_the_engine_cannot_speak(client):
     assert "does not support target language 'ja'" in response.json()["detail"]
 
 
-def test_synthesize_cannot_enable_multi_voice_when_the_startup_flag_is_off(client):
-    response = client.post("/synthesize", data={
-        "text": "hello", "language": "vi", "multi_voice": "true"
-    })
-    assert response.status_code == 400
-    assert "Start the AI service with DUBFLOW_MULTI_VOICE=true" in response.json()["detail"]
+def test_synthesize_contract_uses_speaker_id_without_a_feature_flag():
+    import server
+
+    parameters = inspect.signature(server.synthesize).parameters
+    assert set(parameters) == {
+        "text", "language", "speed", "provider", "model", "speaker_id",
+        "authorization",
+    }
 
 
 def test_authentication_is_still_enforced_when_a_token_is_set(client, monkeypatch):

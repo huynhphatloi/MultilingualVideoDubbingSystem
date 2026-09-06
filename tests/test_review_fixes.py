@@ -23,7 +23,7 @@ class TestEmptyFormFields:
         with pytest.raises(InvalidRequest):
             as_bool("maybe", True)
 
-    def test_the_n8n_empty_flag_path_works(self, all_installed):
+    def test_the_n8n_empty_optional_flag_path_works(self, all_installed):
         """n8n cannot omit a form field: it sends every parameter it declares,
         empty when the operator left it alone. An empty flag must read as
         absent, not as false."""
@@ -35,7 +35,7 @@ class TestEmptyFormFields:
             "enable_source_separation": "false",
         })
         assert built.features.alignment is True
-        assert built.features.diarization is False
+        assert built.features.diarization is True
 
     def test_an_empty_alignment_flag_keeps_the_default(self, all_installed):
         built = config.build({"target_language": "vi", "enable_alignment": ""})
@@ -121,7 +121,7 @@ class TestOutdatedBackend:
         app = self.service(monkeypatch, health=None)
         with pytest.raises(app.OutdatedBackend) as failure:
             app._colab_request("/validate", json={})
-        assert "a build older than 4.0" in str(failure.value.detail)
+        assert "a build older than 5.0" in str(failure.value.detail)
 
     def test_capabilities_labels_it_outdated_rather_than_offline(self, monkeypatch):
         app = self.service(monkeypatch, health="3.0")

@@ -10,7 +10,7 @@ Inference can run locally with Docker or remotely in a Google Colab GPU session.
 | **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · optional Google Colab |
 | **Models** | 16 ASR · 3 translation · 2 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
-| **Tests** | 130, no GPU and no model download required |
+| **Tests** | 128, no GPU and no model download required |
 | **Status** | Reference implementation for development and demonstrations; see [Limitations](#limitations) |
 
 ---
@@ -39,7 +39,7 @@ MP4 with a synchronised voice-over and embedded subtitles.
 ```mermaid
 flowchart TD
     U([Upload video]) --> EX[Extract audio · FFmpeg]
-    EX --> DI{{Speaker diarization · pyannote}}
+    EX --> DI[Speaker diarization · pyannote]
     DI --> AR[Speech recognition · ASR provider]
     AR --> MG[Merge speakers + transcript]
     MG --> TR[Translate · translation provider]
@@ -71,6 +71,7 @@ and the remaining stages continue normally.
 |---|---|
 | Docker Desktop, running | Supplies n8n, FFmpeg and the optional local model service |
 | `python3` ≥ 3.9 on the host | Only for `make check` and the tests |
+| Hugging Face token | Required for the gated pyannote diarization weights |
 | One inference option | Local CPU, local NVIDIA GPU, or a Google Colab GPU session |
 
 ### Option A: run everything locally
@@ -93,28 +94,22 @@ make local-gpu
 | Local AI API | <http://localhost:8001/docs> |
 | n8n workflow | <http://localhost:5678> |
 
-The image installs PyTorch, faster-whisper, Transformers and the base model
-providers. The first job downloads the selected weights into the
-`local-model-cache` Docker volume; later containers reuse them. The default
-Whisper small, NLLB-200 600M and MMS-TTS path runs without optional packages.
-On CPU, start with a 10-second clip and expect model loading and inference to be
-much slower than on a GPU.
+The image installs PyTorch, faster-whisper, Transformers, Edge TTS and pyannote.
+The first job downloads selected weights into the `local-model-cache` Docker
+volume; later containers reuse them. Whisper small, NLLB-200 600M and Edge TTS
+are the defaults. Speaker diarization is a standard pipeline stage, and Edge
+automatically keeps one deterministic stock voice per detected speaker.
 
-Optional packages are not installed in the base local image. Edge TTS,
-pyannote, and Demucs remain unavailable until their packages and any required
-credentials are added. The base configuration supports a stock MMS voice,
-duration alignment, and voice-over mixing.
-
-Multi-voice is a development feature and is off by default. To build the two
-optional packages it needs and start the local stack with the feature enabled:
+Set `HF_TOKEN` before starting locally. The account behind the token must have
+accepted the conditions on both pyannote model pages:
 
 ```bash
-DUBFLOW_MULTI_VOICE=true HF_TOKEN=hf_your_token make local
+HF_TOKEN=hf_your_token make local
 ```
 
-The flag selects Edge TTS, forces speaker diarization, and keeps one Edge voice
-assigned to each speaker label for the duration of the job. Put both values in
-`.env` instead if the setting should survive later restarts.
+Put the token in `.env` if it should survive later restarts. MMS-TTS remains an
+explicit single-voice fallback. Demucs remains optional. On CPU, begin with a
+10-second clip because model loading and inference are much slower than on GPU.
 
 Useful local commands:
 
@@ -131,9 +126,9 @@ make local-stop          # keeps jobs and downloaded model weights
 
 1. Open [`colab/ai_service.ipynb`](colab/ai_service.ipynb) in Google Colab and
    select a GPU runtime.
-2. In the first cell, enable only the engines you intend to use. See
-   [Optional model packages](#optional-model-packages). Add a Hugging Face
-   token into `HF_TOKEN` if you want speaker diarization.
+2. Put a Hugging Face token in `HF_TOKEN`; diarization is part of every job.
+   Choose whether to install Demucs for optional background separation. See
+   [Runtime packages](#runtime-packages).
 3. Run all cells. The last one prints a ready-to-run command.
 
 The launch cell stops the previous server and reloads the checkout. If the
@@ -203,7 +198,7 @@ The running system has four components with separate responsibilities:
 dubflow_core/            Shared, dependency-free: languages, segments,
                          alignment, mixing
 colab/                   AI service (runs on the Colab GPU)
-  ai_service.ipynb       Notebook: install flags, launch, tunnel
+  ai_service.ipynb       Notebook: setup, dependency check, launch, tunnel
   server.py              Task-level inference API
   tasks.py               Short-lived asynchronous inference tasks
   core/                  Errors, runtime (device, model slots), media, config
@@ -219,7 +214,7 @@ local-ai-service/        Docker image for running the Colab API locally
 frontend/index.html      Single-file web UI, reads /capabilities
 n8n/workflows/           The visual pipeline
 scripts/                 check_contract.py, set_backend.py
-tests/                   130 tests, no GPU required
+tests/                   128 tests, no GPU required
 ```
 
 ### Pipeline stages
@@ -232,7 +227,7 @@ runner, so stage order and retry behaviour have one source of truth.
 | # | Stage | Runs on | Optional | Produces |
 |---|---|---|---|---|
 | 1 | `extract` | Local FFmpeg | | 48 kHz soundtrack + 16 kHz mono for the models |
-| 2 | `diarize` | Inference backend | ● | Speaker turns |
+| 2 | `diarize` | Inference backend | | Speaker turns |
 | 3 | `transcribe` | Inference backend | | Canonical segments |
 | 4 | `merge_segments` | Local | | A speaker per segment, by time overlap |
 | 5 | `translate` | Inference backend | | Translations and the SRT (skipped when source = target) |
@@ -306,11 +301,12 @@ canonical segment format.
 
 | Model | Languages | Licence | Install |
 |---|---|---|---|
-| `mms` | 34 | CC-BY-NC-4.0 | base |
-| `edge` | 49 (no Armenian) | Microsoft service terms | `edge-tts` |
+| `edge` (default) | 49 (no Armenian) | Microsoft service terms | standard runtime |
+| `mms` (single-voice fallback) | 34 | CC-BY-NC-4.0 | base |
 
-Both providers use stock voices. Voice cloning is not currently supported; see
-[Future work](#future-work).
+Both providers use stock voices. Edge maps each pyannote speaker label to a
+stable voice; MMS uses one voice for the whole target language. Voice cloning
+is not currently supported; see [Future work](#future-work).
 
 `mms` covers 34 of the 50 application languages. No MMS-TTS checkpoint is
 registered for Japanese, Chinese, Italian, Czech, Danish, Norwegian, Urdu,
@@ -328,32 +324,24 @@ Mongolian. Unsupported combinations are rejected during job validation.
 
 ## Configuration
 
-### Optional model packages
+### Runtime packages
 
-The base install covers Whisper, SeamlessM4T and MMS recognition, both
-translation engines and the `mms` voice. Three flags in the notebook's first
-cell add the rest of what this build registers:
+Edge TTS and pyannote are part of the standard local and Colab setup. The
+notebook exposes only the optional background-separation package:
 
 ```python
-MULTI_VOICE = False          # development feature; set True before starting the API
-INSTALL_EDGE = True          # edge           - stock voice, 49 languages, no GPU
-INSTALL_DIARIZATION = True   # pyannote.audio - one voice per speaker
-INSTALL_DEMUCS = True        # demucs         - separate speech from background
+HF_TOKEN = ""          # required by pyannote's gated weights
+INSTALL_DEMUCS = True  # separate speech from background
 ```
 
-`MULTI_VOICE = True` requires both `INSTALL_EDGE` and
-`INSTALL_DIARIZATION`. It makes Edge the default voice provider and prevents a
-multi-voice job from running with a single-voice provider such as MMS.
-
-When a package is disabled, `/capabilities` reports its models as unavailable,
-the web UI disables them, and incompatible jobs are rejected during validation.
-
-`INSTALL_DIARIZATION` needs `HF_TOKEN`, and the account behind it has to have
-accepted the conditions on both `pyannote/speaker-diarization-3.1` and
+`HF_TOKEN` must belong to an account that accepted the conditions on both
+`pyannote/speaker-diarization-3.1` and
 `pyannote/segmentation-3.0`.
 
-The notebook runs a dependency preflight after installing optional packages and
-reports incompatible imports before starting the API.
+The notebook runs a dependency preflight after installation and reports
+incompatible imports before starting the API. `/capabilities` reports whether
+the required models and credentials are available, and the web UI blocks a job
+before upload if diarization cannot run.
 
 ### Environment variables — local stack
 
@@ -367,7 +355,6 @@ Set in `.env`; `docker-compose.yml` passes them through.
 | `KAGGLE_API_URL` / `KAGGLE_API_TOKEN` | — | Second backend slot |
 | `LOCAL_API_URL` / `LOCAL_API_TOKEN` | — | Local model service; set by the local Compose overlay |
 | `LOCAL_AI_PORT` | `8001` | Host-only port for the local model API |
-| `DUBFLOW_MULTI_VOICE` | `false` | Enable the development multi-voice path; local builds then install Edge and pyannote |
 | `COLAB_API_TIMEOUT` | `1800` | Seconds allowed per backend call |
 | `ASYNC_STAGES` | `1` | Run the slow stages as notebook tasks and poll, instead of holding one long request open |
 | `TASK_POLL_INTERVAL` | `3` | Seconds between polls |
@@ -397,7 +384,6 @@ Set in the notebook before the launch cell.
 | `WHISPER_MODEL` | `small` | Model used when a request names none |
 | `HF_TOKEN` | — | Hugging Face token for gated weights. `HUGGINGFACE_TOKEN` and `HUGGING_FACE_HUB_TOKEN` are also read |
 | `DUBFLOW_DEVICE` | auto-detected | Force `cuda` or `cpu` |
-| `DUBFLOW_MULTI_VOICE` | `false` | Force diarization and use a stable Edge voice per speaker label |
 | `TRANSLATION_MODEL` | `facebook/nllb-200-distilled-600M` | Override the default NLLB checkpoint |
 | `SEAMLESS_MODEL` | `facebook/hf-seamless-m4t-medium` | Override the SeamlessM4T checkpoint |
 
@@ -550,7 +536,7 @@ media logic with stand-in models and real FFmpeg.
 ### Contract check
 
 `scripts/check_contract.py` verifies that the frontend, gateway, n8n form and
-provider registry agree on models, flags and pipeline stages.
+provider registry agree on models, options and pipeline stages.
 
 ### Make targets
 
@@ -587,9 +573,9 @@ dependency changes require a rebuild.
 | `make start` reports auto-activation unavailable | The n8n CLI refused to activate | Open <http://localhost:5678>, open *Multilingual Dubbing*, save it, set it Active |
 | Upload rejected: *does not support target language* | The chosen engine has no such language | Pick another model; the error names working alternatives |
 | Upload rejected: *cannot detect the spoken language* | The recogniser has no language identification | Set **Original language** explicitly instead of Detect automatically |
-| `503` *needs the '…' package* | The engine's flag is off in the notebook | Enable it in cell 1, re-run the install cell, then re-run the launch cell |
+| `503` *needs the '…' package* | A runtime package did not install | Re-run the install and preflight cells, then restart the API cell |
 | `503` *HF_TOKEN is not set* | pyannote's weights are gated | Accept the conditions on both pyannote model pages, paste a token into cell 1 |
-| Colab reports incompatible imports | An optional package replaced a pinned dependency | Disable the most recently enabled optional package, restart the runtime, and run all cells again |
+| Colab reports incompatible imports | A runtime dependency is incompatible | Restart the runtime and run all cells; disable Demucs first if it triggered the conflict |
 | CUDA out of memory on the n8n route | Several models remain resident | `POST /unload`, or choose a smaller checkpoint |
 
 ---
@@ -609,22 +595,22 @@ dependency changes require a rebuild.
   expose it to a network you do not control.
 - The n8n workflow has no retry or failure branch: a dropped tunnel stops the
   run. The web UI still reports the failing stage and its message.
-- With multi-voice disabled, speaker diarization does not change the generated
-  voice. With it enabled, speakers outnumbering the available Edge voices reuse
-  voices deterministically.
+- Edge assigns voices deterministically from pyannote labels. When detected
+  speakers outnumber available voices for a language, labels reuse voices.
+- Selecting MMS-TTS intentionally falls back to one stock voice for the entire
+  target language even though speaker labels remain in the transcript.
 
 ---
 
 ## Future work
 
-### Per-speaker voices
+### Voice cloning
 
-Set `DUBFLOW_MULTI_VOICE=true` locally, or `MULTI_VOICE = True` in the notebook,
-to map pyannote labels to Edge voices. The mapping is deterministic: the same
-speaker label keeps the same voice, and `job.json` records it under
-`speaker_voice_map`. This uses stock voices and does not clone the original
-speakers. F5-TTS support remains removed because its dependencies are
-incompatible with the base Colab environment.
+Per-speaker Edge voices are now part of the main pipeline, but they remain stock
+voices rather than clones of the original speakers. A future cloning provider
+would need consent handling, reference-audio storage and a compatible runtime.
+F5-TTS support remains removed because its dependencies are incompatible with
+the base Colab environment.
 
 ### Lip sync
 

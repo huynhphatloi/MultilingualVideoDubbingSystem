@@ -258,10 +258,10 @@
               "fieldOptions": {
                 "values": [
                   {
-                    "option": "mms - MMS-TTS, the default: 34 languages"
+                    "option": "edge - Microsoft Edge voices, default: one voice per speaker"
                   },
                   {
-                    "option": "edge - Microsoft Edge voices, most natural, needs internet"
+                    "option": "mms - MMS-TTS, single-voice offline fallback: 34 languages"
                   }
                 ]
               },
@@ -323,7 +323,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'mms - MMS-TTS, the default'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// The AI service applies defaults for settings this static form does not ask for.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n};\n\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
+        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'edge - Microsoft Edge voices'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// The AI service applies defaults for settings this static form does not ask for.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n};\n\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
       },
       "id": "0bd18971-d5c4-4f07-8131-f84f8a377002",
       "name": "Prepare Upload",
@@ -419,7 +419,7 @@
         -160,
         160
       ],
-      "notes": "Optional. pyannote on the AI backend returns speaker turns; skipped when the job did not ask for it.",
+      "notes": "Required. pyannote returns speaker turns used for transcript labels and stable per-speaker Edge voices.",
       "notesInFlow": true
     },
     {
@@ -779,7 +779,7 @@
     },
     {
       "parameters": {
-        "content": "# 02 · UNDERSTAND THE SOURCE\nPrepare model-ready audio, identify speakers when enabled, transcribe speech, then merge speaker turns with timestamped text.",
+        "content": "# 02 · UNDERSTAND THE SOURCE\nPrepare model-ready audio, identify speakers, transcribe speech, then merge speaker turns with timestamped text.",
         "height": 370,
         "width": 1100,
         "color": 5

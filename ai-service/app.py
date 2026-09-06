@@ -60,7 +60,7 @@ _JOB_ID = re.compile(r"^[a-f0-9]{12}$")
 _ALLOWED_VIDEO = {".mp4", ".mkv", ".mov", ".webm", ".m4v"}
 
 MODERN_ENDPOINTS = ("/capabilities", "/validate", "/diarize", "/separate", "/align")
-MIN_BACKEND_VERSION = "4.0"
+MIN_BACKEND_VERSION = "5.0"
 
 STAGES = [
     "extract",
@@ -595,9 +595,6 @@ def diarize(request: JobRequest) -> dict:
     if reused:
         return reused
     job = _load_job(request.job_id)
-    if not _features(job).get("diarization"):
-        return _skip(request.job_id, "diarize", "diarization is off for this job")
-
     with _stage(request.job_id, "diarize") as (job, folder):
         audio = folder / job["files"]["asr_audio"]
         choice = job["config"].get("diarization") or {}
@@ -767,9 +764,7 @@ def synthesize(request: JobRequest) -> dict:
                 "provider": choice.get("provider", ""),
                 "model": choice.get("model", ""),
             }
-            if _features(job).get("multi_voice"):
-                data["speaker_id"] = segment.get("speaker_id") or ""
-                data["multi_voice"] = "true"
+            data["speaker_id"] = segment.get("speaker_id") or ""
             response = _colab_request("/synthesize", data=data)
             output = output_dir / f"{segment['id']:04d}.wav"
             output.write_bytes(response.content)

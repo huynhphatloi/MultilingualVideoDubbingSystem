@@ -159,39 +159,6 @@
       text-wrap: balance;
     }
 
-    .hero-lede {
-      max-width: 650px;
-      margin: 24px 0 0;
-      color: var(--muted);
-      font-size: 17px;
-      line-height: 1.7;
-      text-wrap: pretty;
-    }
-
-    .hero-lede strong { color: var(--ink); }
-
-    .hero-stats {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 28px;
-    }
-
-    .hero-stat {
-      display: flex;
-      align-items: baseline;
-      gap: 7px;
-      padding: 8px 11px;
-      border: 1px solid rgba(23, 35, 29, 0.15);
-      border-radius: 8px;
-      background: rgba(255, 254, 250, 0.56);
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 500;
-    }
-
-    .hero-stat strong { color: var(--ink); font-size: 15px; font-weight: 700; }
-
     .hero-note {
       display: grid;
       align-content: space-between;
@@ -718,17 +685,6 @@
 
     .result-link.primary { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); }
 
-    footer {
-      display: flex;
-      justify-content: space-between;
-      gap: 24px;
-      padding: 0 0 36px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    footer a { color: var(--ink); font-weight: 700; text-decoration: none; }
-
     :where(a, button, select, input):focus-visible {
       outline: 3px solid rgba(20, 107, 91, 0.26);
       outline-offset: 3px;
@@ -754,7 +710,6 @@
       .nav-link { padding: 8px 10px; font-size: 11px; }
       .hero { padding: 36px 0 28px; }
       h1 { font-size: clamp(43px, 14vw, 58px); }
-      .hero-lede { margin-top: 18px; font-size: 14px; }
       .hero-note { padding: 20px; box-shadow: 6px 6px 0 rgba(216, 255, 88, 0.72); }
       .panel { padding: 24px 18px; }
       .panel-head { display: grid; }
@@ -764,7 +719,6 @@
       .job-meta { align-items: flex-start; flex-direction: column; gap: 5px; }
       .history-state { margin-right: 0; }
       .result-actions { flex-direction: column; }
-      footer { flex-direction: column; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -871,21 +825,12 @@
       <div>
         <p class="eyebrow">Observable AI dubbing pipeline</p>
         <h1 id="hero-title">Make every<br>voice travel.</h1>
-        <p class="hero-lede">
-          Turn a source video into a synchronized multilingual dub. Choose the
-          models, watch every stage run, and download the finished video with subtitles.
-        </p>
-        <div class="hero-stats" aria-label="Project highlights">
-          <span class="hero-stat"><strong>50</strong> languages</span>
-          <span class="hero-stat"><strong>11</strong> visible checkpoints</span>
-          <span class="hero-stat"><strong>Local</strong> or cloud runtime</span>
-        </div>
       </div>
       <aside class="hero-note" aria-label="Demo flow overview">
         <div class="hero-note-head"><span>Demo flow</span><span>01 — 11</span></div>
         <ol class="demo-flow">
           <li><span>01</span><div><strong>Upload</strong><small>Store the source and job configuration.</small></div></li>
-          <li><span>02</span><div><strong>Understand</strong><small>Extract, recognize and optionally identify speakers.</small></div></li>
+          <li><span>02</span><div><strong>Understand</strong><small>Extract, identify speakers and recognize speech.</small></div></li>
           <li><span>03</span><div><strong>Rebuild</strong><small>Translate, synthesize and align each segment.</small></div></li>
           <li><span>04</span><div><strong>Deliver</strong><small>Mix, render and export video plus subtitles.</small></div></li>
         </ol>
@@ -955,13 +900,6 @@
 
           <p class="section-title">Pipeline options</p>
           <div class="options">
-            <label class="option" id="option-diarization">
-              <input type="checkbox" id="enable-diarization">
-              <span>
-                <span class="option-name">Speaker diarization</span>
-                <span class="option-hint" id="hint-diarization">One voice per speaker</span>
-              </span>
-            </label>
             <label class="option" id="option-alignment">
               <input type="checkbox" id="enable-alignment" checked>
               <span>
@@ -1027,17 +965,13 @@
       </section>
     </main>
 
-    <footer>
-      <span>FastAPI gateway · n8n orchestration · local or Colab AI runtime</span>
-      <span>Inspect the system: <a href="http://localhost:5678" target="_blank" rel="noreferrer">n8n workflow</a> · <a href="/docs" target="_blank" rel="noreferrer">API contract</a></span>
-    </footer>
   </div>
 
   <script>
     const STAGES = [
       { id: "upload", name: "Upload video", tool: "FastAPI storage" },
       { id: "extract", name: "Extract audio", tool: "FFmpeg" },
-      { id: "diarize", name: "Speaker diarization", tool: "pyannote", optional: true },
+      { id: "diarize", name: "Speaker diarization", tool: "pyannote" },
       { id: "transcribe", name: "Speech recognition", tool: "ASR model" },
       { id: "merge_segments", name: "Merge speakers + transcript", tool: "Time overlap" },
       { id: "translate", name: "Translate", tool: "Translation model" },
@@ -1088,7 +1022,6 @@
       }
     };
     const toggles = {
-      diarization: document.getElementById("enable-diarization"),
       alignment: document.getElementById("enable-alignment"),
       source_separation: document.getElementById("enable-source-separation")
     };
@@ -1206,10 +1139,6 @@
         if (task === "translation") {
           return speaks(model, target) && (!source || speaks(model, source));
         }
-        if (task === "tts"
-            && capabilities.feature_flags
-            && capabilities.feature_flags.multi_voice
-            && !model.supports_multispeaker) return false;
         return speaks(model, target);
       });
     }
@@ -1242,7 +1171,11 @@
         control.note.className = "field-note";
         control.note.textContent = "";
       }
-      return models.find(model => model.id === control.model.value) || null;
+      const selected = models.find(model => model.id === control.model.value) || null;
+      if (task === "tts" && selected && !selected.supports_multispeaker) {
+        control.note.textContent = "Single-voice fallback. Choose Edge TTS for one voice per speaker.";
+      }
+      return selected;
     }
 
     function optionState(name, enabled, hint, forced) {
@@ -1257,23 +1190,6 @@
     }
 
     function refreshOptions() {
-      const diarization = modelsOf("diarization").filter(model => model.available);
-      const multiVoice = Boolean(
-        capabilities && capabilities.feature_flags && capabilities.feature_flags.multi_voice
-      );
-      optionState(
-        "diarization",
-        multiVoice ? false : diarization.length > 0,
-        multiVoice
-          ? (diarization.length
-              ? "Required by multi-voice development mode"
-              : "Multi-voice needs pyannote and HF_TOKEN")
-          : (diarization.length
-              ? "Identify speakers in the transcript"
-              : "pyannote is not installed on this backend"),
-        multiVoice ? true : undefined
-      );
-
       const separation = modelsOf("separation").filter(model => model.available);
       optionState(
         "source_separation",
@@ -1295,10 +1211,7 @@
       if (!asrModel) missing.push("speech recognition");
       if (!translationModel) missing.push("translation");
       if (!ttsModel) missing.push("a voice");
-      const multiVoice = Boolean(
-        capabilities && capabilities.feature_flags && capabilities.feature_flags.multi_voice
-      );
-      if (multiVoice && !modelsOf("diarization").some(model => model.available)) {
+      if (!modelsOf("diarization").some(model => model.available)) {
         missing.push("speaker diarization");
       }
       const blocked = missing.length > 0;
@@ -1349,12 +1262,9 @@
         showBanner(capabilities.hint || "No AI backend is answering. Start the notebook and point .env at it.");
         setUnavailable(outdated ? "Re-run the notebook" : "AI backend offline");
       } else {
-        const development = capabilities.feature_flags && capabilities.feature_flags.multi_voice
-          ? " · multi-voice dev"
-          : "";
         setBadge(
           backendBadge,
-          `${capabilities.ai_backend || "ready"} · ${capabilities.device || "cpu"}${development}`,
+          `${capabilities.ai_backend || "ready"} · ${capabilities.device || "cpu"}`,
           "ready"
         );
         showBanner("");
@@ -1521,8 +1431,6 @@
     function flagTags(job) {
       const features = job.features || {};
       const tags = [];
-      if (features.diarization) tags.push(["diarize", ""]);
-      if (features.multi_voice) tags.push(["multi-voice", ""]);
       if (features.source_separation) tags.push(["separate", ""]);
       if (features.alignment === false) tags.push(["no align", "off"]);
       return tags.map(([name, tone]) =>

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import providers  # noqa: E402
-from core import config as job_config, feature_flags  # noqa: E402
+from core import config as job_config  # noqa: E402
 from core.errors import InvalidRequest, ServiceError  # noqa: E402
 from core.media import Scratch, duration, sample_rate  # noqa: E402
 from core.runtime import device, loaded, release_all  # noqa: E402
@@ -43,7 +43,7 @@ AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", providers.DEFAULTS["asr"])
 MODEL_LOCK = threading.RLock()
 
-app = FastAPI(title="DubFlow Colab AI", version="4.0")
+app = FastAPI(title="DubFlow Colab AI", version="5.0")
 
 
 @app.exception_handler(ServiceError)
@@ -119,7 +119,6 @@ def health() -> Dict:
             "separation",
         ],
         "loaded": loaded(),
-        "feature_flags": feature_flags.public(),
     }
 
 
@@ -304,24 +303,11 @@ def synthesize(
     provider: str = Form(""),
     model: str = Form(""),
     speaker_id: str = Form(""),
-    multi_voice: str = Form(""),
     authorization: Optional[str] = Header(None),
 ) -> Response:
     _authorize(authorization)
     target = _language(language)
-    requested_multi_voice = job_config.as_bool(multi_voice, False)
-    if requested_multi_voice and not feature_flags.multi_voice_enabled():
-        raise InvalidRequest(
-            "Multi-voice is disabled. Start the AI service with "
-            "DUBFLOW_MULTI_VOICE=true before requesting it."
-        )
-    default_model = "edge" if requested_multi_voice else providers.DEFAULTS["tts"]
-    spec = providers.find("tts", provider or None, model or default_model)
-    if requested_multi_voice and not spec.supports_multispeaker:
-        raise InvalidRequest(
-            "Multi-voice mode requires Edge TTS. Restart without "
-            "DUBFLOW_MULTI_VOICE=true to use a single-voice model."
-        )
+    spec = providers.find("tts", provider or None, model or providers.DEFAULTS["tts"])
     providers.registry("tts").require_language(spec, target, "target")
     text = text.strip()
     if not text:
@@ -340,7 +326,6 @@ def synthesize(
                     language=target,
                     speed=speed,
                     speaker_id=speaker_id.strip() or None,
-                    multi_voice=requested_multi_voice,
                 ),
                 output,
             )

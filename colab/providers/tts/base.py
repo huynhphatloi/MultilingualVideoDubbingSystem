@@ -15,7 +15,6 @@ class SpeechRequest:
     language: str
     speed: float = 1.0
     speaker_id: Optional[str] = None
-    multi_voice: bool = False
 
 
 class TTSProvider(ABC):

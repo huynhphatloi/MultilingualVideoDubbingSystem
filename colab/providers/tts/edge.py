@@ -51,10 +51,9 @@ class EdgeProvider(TTSProvider):
         self,
         language: str,
         speaker_id: Optional[str] = None,
-        multi_voice: bool = False,
     ) -> str:
         matches = self.voices_for(language)
-        if multi_voice and speaker_id:
+        if speaker_id:
             ordered = sorted(matches, key=lambda voice: str(voice.get("ShortName", "")))
             suffix = re.search(r"(\d+)$", speaker_id)
             if suffix:
@@ -72,7 +71,6 @@ class EdgeProvider(TTSProvider):
         voice = self.voice_for(
             request.language,
             speaker_id=request.speaker_id,
-            multi_voice=request.multi_voice,
         )
         self._chosen = voice
         percent = int(round((request.speed - 1.0) * 100))

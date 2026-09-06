@@ -147,9 +147,9 @@ def test_the_cell_reloads_a_pulled_checkout_without_a_restart(tmp_path):
 
         target = {server!r}
         source = open(target).read()
-        assert 'version="4.0"' in source, "the checkout to modify was not found"
+        assert 'version="5.0"' in source, "the checkout to modify was not found"
         with open(target, "w") as handle:
-            handle.write(source.replace('version="4.0"', 'version="4.1-pulled"'))
+            handle.write(source.replace('version="5.0"', 'version="5.1-pulled"'))
 
         exec(CELL, globals())
         print("VERSION_2", version())
@@ -168,5 +168,5 @@ def test_the_cell_reloads_a_pulled_checkout_without_a_restart(tmp_path):
     )
     output = result.stdout + result.stderr
     assert "PREMISE FAILED" not in output, output
-    assert "VERSION_1 4.0" in output, output
-    assert "VERSION_2 4.1-pulled" in output, output[-2000:]
+    assert "VERSION_1 5.0" in output, output
+    assert "VERSION_2 5.1-pulled" in output, output[-2000:]
