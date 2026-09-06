@@ -61,6 +61,14 @@ BACKEND_PROBE_TTL = float(os.getenv("BACKEND_PROBE_TTL", "30"))
 BACKEND_PROBE_TIMEOUT = float(os.getenv("BACKEND_PROBE_TIMEOUT", "10"))
 #: The catalogue changes only when the notebook restarts.
 CAPABILITIES_TTL = float(os.getenv("CAPABILITIES_TTL", "60"))
+#: A Cloudflare quick tunnel abandons a request that has not answered in about
+#: a hundred seconds, and transcribing or separating a real video takes longer.
+#: The slow stages therefore run as background tasks on the notebook and this
+#: service polls, so no single request is ever long enough to be cut off.
+ASYNC_STAGES = os.getenv("ASYNC_STAGES", "1").strip().lower() not in {"0", "false", "no"}
+#: How often to ask, and how long to keep asking.
+TASK_POLL_INTERVAL = float(os.getenv("TASK_POLL_INTERVAL", "3"))
+TASK_POLL_TIMEOUT = float(os.getenv("TASK_POLL_TIMEOUT", "3600"))
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://n8n:5678/webhook/dubbing/start")
 
 FRONTEND_INDEX = Path(os.getenv("FRONTEND_INDEX", APP_DIR / "frontend" / "index.html"))
@@ -377,6 +385,58 @@ def _detail(response) -> str:  # noqa: ANN001
     return response.text[:500]
 
 
+def _await_task(state: dict, path: str) -> dict:
+    """Poll a notebook task until it finishes, and return what it produced.
+
+    Each poll is its own short request, which is the whole point: the work can
+    take an hour without any single connection being held open long enough for
+    the tunnel to give up on it.
+    """
+    task_id = state.get("task_id")
+    if not task_id:
+        raise RuntimeError(f"The AI backend accepted {path} but returned no task id")
+    deadline = time.monotonic() + TASK_POLL_TIMEOUT
+    while True:
+        if time.monotonic() > deadline:
+            raise HTTPException(
+                504,
+                f"The AI backend is still running {path} after "
+                f"{int(TASK_POLL_TIMEOUT / 60)} minutes (task {task_id}). It may "
+                f"still finish; raise TASK_POLL_TIMEOUT if this video is simply long.",
+            )
+        time.sleep(TASK_POLL_INTERVAL)
+        payload = _json(_colab_request(f"/tasks/{task_id}", method="GET"))
+        if not payload.get("done"):
+            continue
+        if payload.get("status") == "failed":
+            raise HTTPException(
+                502,
+                f"AI backend failed during {path}: "
+                f"{payload.get('error') or 'no reason given'}",
+            )
+        return payload.get("result") or {}
+
+
+def _stage_call(path: str, **kwargs) -> dict:  # noqa: ANN003
+    """Run one notebook stage, in the background when the backend supports it.
+
+    An older session has no /tasks route, so a 404 there means "this build is
+    synchronous" rather than "the request was wrong": fall back rather than fail.
+    """
+    if not ASYNC_STAGES:
+        return _json(_colab_request(path, **kwargs))
+    payload = dict(kwargs)
+    if "json" in payload:
+        payload["json"] = {**payload["json"], "async_mode": True}
+    else:
+        payload["data"] = {**(payload.get("data") or {}), "async_mode": "true"}
+    response = _colab_request(path, **payload)
+    if response.status_code != 202:
+        # The backend ran it synchronously; the body is already the answer.
+        return _json(response)
+    return _await_task(_json(response), path)
+
+
 def _json(response) -> dict:  # noqa: ANN001
     try:
         payload = response.json()
@@ -600,7 +660,7 @@ def diarize(request: JobRequest) -> dict:
         audio = folder / job["files"]["asr_audio"]
         choice = job["config"].get("diarization") or {}
         with audio.open("rb") as stream:
-            payload = _json(_colab_request(
+            payload = _stage_call(
                 "/diarize",
                 files={"audio": (audio.name, stream, "audio/wav")},
                 data={
@@ -609,7 +669,7 @@ def diarize(request: JobRequest) -> dict:
                     "min_speakers": job["request"].get("min_speakers", ""),
                     "max_speakers": job["request"].get("max_speakers", ""),
                 },
-            ))
+            )
         turns = payload.get("turns") or []
         if not turns:
             raise RuntimeError("Diarization returned no speaker turns")
@@ -635,7 +695,7 @@ def transcribe(request: JobRequest) -> dict:
         audio = folder / job["files"]["asr_audio"]
         choice = job["config"].get("asr") or {}
         with audio.open("rb") as stream:
-            payload = _json(_colab_request(
+            payload = _stage_call(
                 "/transcribe",
                 files={"audio": (audio.name, stream, "audio/wav")},
                 data={
@@ -647,7 +707,7 @@ def transcribe(request: JobRequest) -> dict:
                     "model": choice.get("model", ""),
                     "turns": json.dumps(job.get("turns") or []),
                 },
-            ))
+            )
         segments = payload.get("segments") or []
         detected = payload.get("source_language")
         if not segments:
@@ -705,7 +765,7 @@ def translate(request: JobRequest) -> dict:
         if source == target:
             translations = texts
         else:
-            payload = _json(_colab_request(
+            payload = _stage_call(
                 "/translate",
                 json={
                     "source_language": source,
@@ -714,7 +774,7 @@ def translate(request: JobRequest) -> dict:
                     "provider": choice.get("provider", ""),
                     "model": choice.get("model", ""),
                 },
-            ))
+            )
             translations = payload.get("translations")
             if not isinstance(translations, list):
                 raise RuntimeError("The AI backend returned no translations")
@@ -974,15 +1034,26 @@ def separate(request: JobRequest) -> dict:
     with _stage(request.job_id, "separate") as (job, folder):
         original = folder / job["files"]["original_audio"]
         choice = job["config"].get("separation") or {}
+        data = {
+            "provider": choice.get("provider", ""),
+            "model": choice.get("model", ""),
+            "stem": "background",
+        }
+        if ASYNC_STAGES:
+            data["async_mode"] = "true"
         with original.open("rb") as stream:
             response = _colab_request(
                 "/separate",
                 files={"audio": (original.name, stream, "audio/wav")},
-                data={
-                    "provider": choice.get("provider", ""),
-                    "model": choice.get("model", ""),
-                    "stem": "background",
-                },
+                data=data,
+            )
+        if response.status_code == 202:
+            # Separation is the slowest stage; the stem is collected once the
+            # task reports done, rather than held open across the whole run.
+            state = _json(response)
+            _await_task(state, "/separate")
+            response = _colab_request(
+                f"/tasks/{state['task_id']}/download", method="GET"
             )
         background = folder / "background.wav"
         background.write_bytes(response.content)

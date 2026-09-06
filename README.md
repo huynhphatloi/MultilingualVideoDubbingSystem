@@ -11,7 +11,7 @@ Colab GPU; nothing is downloaded onto the machine running the stack.
 | **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · Google Colab |
 | **Models** | 16 ASR · 3 translation · 4 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
-| **Tests** | 116, no GPU and no model download required |
+| **Tests** | 131, no GPU and no model download required |
 | **Status** | Reference implementation. Demo-grade security — see [Limitations](#limitations) |
 
 ---
@@ -184,6 +184,38 @@ the tunnel. The notebook's own `POST /jobs` runs all eleven in Colab.
 | 10 | `mix` | Local FFmpeg | | Dub track placed at timestamps, blended |
 | 11 | `render` | Local FFmpeg | | MP4 with audio and embedded subtitles |
 
+### Long stages do not hold a connection open
+
+A Cloudflare quick tunnel abandons a request that has not answered in about a
+hundred seconds. Transcribing or separating a real video takes longer, so a
+synchronous call cannot work: the caller gets a `524` that says nothing, while
+the GPU carries on with nobody left to receive the result.
+
+The four slow stages therefore accept `async_mode`. The notebook starts the
+work in a background thread, answers `202` with a task id, and the local service
+polls `GET /tasks/{id}` — every request short enough to survive, however long
+the work takes.
+
+| | Synchronous | As a task |
+|---|---|---|
+| `POST /diarize`, `/transcribe`, `/separate` | form field `async_mode=true` | `202` + `task_id` |
+| `POST /translate` | JSON field `"async_mode": true` | `202` + `task_id` |
+| `GET /tasks/{id}` | | status, and `result` once `done` |
+| `GET /tasks/{id}/download` | | the file, for `/separate` |
+
+Three properties this keeps:
+
+- **Async is opt-in.** Without the field every endpoint answers exactly as
+  before, so an existing caller needs no change.
+- **A backend without it still works.** An older notebook ignores the unknown
+  field and replies `200` with the real answer; the poller takes that rather
+  than insisting on a task id.
+- **Errors keep their status.** A task that fails with a 400 reports 400, not a
+  generic 500, so an async caller learns what a synchronous one would.
+
+Validation still happens inside the request, so an impossible configuration is
+refused immediately instead of becoming a task that fails later.
+
 ### One source of truth
 
 `GET /capabilities` is the catalogue. The local API proxies it, the web UI
@@ -299,6 +331,9 @@ Set in `.env`; `docker-compose.yml` passes them through.
 | `COLAB_API_TOKEN` | — | Bearer token printed by the notebook |
 | `KAGGLE_API_URL` / `KAGGLE_API_TOKEN` | — | Second backend slot |
 | `COLAB_API_TIMEOUT` | `1800` | Seconds allowed per backend call |
+| `ASYNC_STAGES` | `1` | Run the slow stages as notebook tasks and poll, instead of holding one long request open |
+| `TASK_POLL_INTERVAL` | `3` | Seconds between polls |
+| `TASK_POLL_TIMEOUT` | `3600` | Seconds to keep polling before giving up on a task |
 | `BACKEND_PROBE_TTL` | `30` | Seconds a successful `/health` probe is cached |
 | `BACKEND_PROBE_TIMEOUT` | `10` | Seconds to wait for `/health` |
 | `CAPABILITIES_TTL` | `60` | Seconds the model catalogue is cached |

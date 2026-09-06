@@ -52,6 +52,7 @@ from pydantic import BaseModel  # noqa: E402
 
 import jobs  # noqa: E402
 import pipeline  # noqa: E402
+import tasks  # noqa: E402
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
 #: Only the fallback when a request omits the model.
@@ -82,6 +83,54 @@ def _authorize(authorization: Optional[str]) -> None:
 
 def _language(value: str, allow_auto: bool = False) -> Optional[str]:
     return job_config.as_language(value, "language", allow_auto=allow_auto)
+
+
+def _persist(upload: UploadFile) -> Path:
+    """Copy an upload to a file the request's lifetime does not own.
+
+    A background task outlives the request that started it, and FastAPI closes
+    the upload's spooled file as soon as the response is sent - so the bytes
+    have to be somewhere else before that happens. The task deletes it.
+    """
+    suffix = Path(upload.filename or "audio.wav").suffix or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+        shutil.copyfileobj(upload.file, handle)
+    return Path(handle.name)
+
+
+def _deferred(work, async_mode: str, label: str):  # noqa: ANN001, ANN201
+    """Run `work` now, or hand it to a background task and answer immediately.
+
+    A Cloudflare quick tunnel abandons a request after about a hundred seconds.
+    Transcribing or separating a real video takes longer, so the caller asks for
+    async_mode, gets a task id, and polls GET /tasks/{id} - every request short
+    enough to survive, however long the work itself takes.
+    """
+    if job_config.as_bool(async_mode, False):
+        return JSONResponse(status_code=202, content=tasks.submit(work, label))
+    return work()
+
+
+@app.get("/tasks/{task_id}")
+def read_task(task_id: str, authorization: Optional[str] = Header(None)) -> Dict:
+    """Poll a background task. `done` is true once there is a result or an
+    error; `result` is exactly what the synchronous route would have returned."""
+    _authorize(authorization)
+    return tasks.public(task_id)
+
+
+@app.get("/tasks/{task_id}/download")
+def download_task(task_id: str, authorization: Optional[str] = Header(None)):  # noqa: ANN201
+    """The file a task produced, for the stages whose answer is audio."""
+    _authorize(authorization)
+    payload = tasks.result_or_raise(task_id)
+    if not payload or not payload.get("file"):
+        raise ServiceError(f"Task '{task_id}' has no file to download", status_code=409)
+    return FileResponse(
+        payload["file"],
+        media_type=payload.get("media_type", "application/octet-stream"),
+        headers=payload.get("headers") or {},
+    )
 
 
 # ==========================================================================
@@ -204,31 +253,34 @@ def diarize(
     model: str = Form(""),
     min_speakers: str = Form(""),
     max_speakers: str = Form(""),
+    async_mode: str = Form(""),
     authorization: Optional[str] = Header(None),
-) -> Dict:
+):  # noqa: ANN201
     """Who spoke when, as turns the caller can merge with a transcript."""
     _authorize(authorization)
     spec = providers.find("diarization", provider or None,
                           model or providers.DEFAULTS["diarization"])
     providers.registry("diarization").require_available(spec)
-    suffix = Path(audio.filename or "audio.wav").suffix or ".wav"
-    with Scratch(suffix) as path:
-        with path.open("wb") as handle:
-            shutil.copyfileobj(audio.file, handle)
-        with jobs.lock:
-            engine = providers.diarization.load(spec)
-            turns = engine.diarize(
-                path,
-                min_speakers=int(min_speakers) if min_speakers.strip() else None,
-                max_speakers=int(max_speakers) if max_speakers.strip() else None,
-            )
-    return {
-        "turns": turns,
-        "speakers": segment_tools.speakers_of(
-            [{"speaker_id": turn["speaker_id"]} for turn in turns]
-        ),
-        "diarization_model": engine.name,
-    }
+    path = _persist(audio)
+    lower = int(min_speakers) if min_speakers.strip() else None
+    upper = int(max_speakers) if max_speakers.strip() else None
+
+    def work() -> Dict:
+        try:
+            with jobs.lock:
+                engine = providers.diarization.load(spec)
+                turns = engine.diarize(path, min_speakers=lower, max_speakers=upper)
+            return {
+                "turns": turns,
+                "speakers": segment_tools.speakers_of(
+                    [{"speaker_id": turn["speaker_id"]} for turn in turns]
+                ),
+                "diarization_model": engine.name,
+            }
+        finally:
+            path.unlink(missing_ok=True)
+
+    return _deferred(work, async_mode, f"diarize:{spec.id}")
 
 
 @app.post("/transcribe")
@@ -238,8 +290,9 @@ def transcribe(
     model: str = Form(""),
     provider: str = Form(""),
     turns: str = Form(""),
+    async_mode: str = Form(""),
     authorization: Optional[str] = Header(None),
-) -> Dict:
+):  # noqa: ANN201
     """Speech to text. `turns` is optional diarization JSON: when a recogniser
     has no timestamps of its own, those turns become its windows."""
     _authorize(authorization)
@@ -254,36 +307,42 @@ def transcribe(
         providers.registry("asr").require_language(spec, source, "source")
 
     parsed = _parse_turns(turns)
-    suffix = Path(audio.filename or "audio.wav").suffix or ".wav"
-    with Scratch(suffix) as path:
-        with path.open("wb") as handle:
-            shutil.copyfileobj(audio.file, handle)
-        with jobs.lock:
-            engine = providers.asr.load(spec, source)
-            windows = (
-                windows_from_turns(parsed)
-                if parsed and not spec.supports_timestamps else None
-            )
-            # `source` may be None: a recogniser that detects the language does
-            # so while transcribing, so asking it twice would run the model over
-            # the whole file for nothing.
-            result = engine.transcribe(path, source, windows)
-        providers.registry("asr").require_language(spec, result.language, "source")
+    path = _persist(audio)
 
-    segments = result.segments
-    if parsed:
-        segments = segment_tools.renumber(segment_tools.assign_speakers(segments, parsed))
-    if not segments:
-        raise ServiceError("No speech was found in the audio", status_code=422)
-    return {
-        "source_language": result.language,
-        "segments": segments,
-        "speakers": segment_tools.speakers_of(segments),
-        "asr_provider": spec.provider,
-        "asr_model": spec.id,
-        # Legacy key: the old response called every recogniser "whisper".
-        "whisper_model": spec.id,
-    }
+    def work() -> Dict:
+        try:
+            with jobs.lock:
+                engine = providers.asr.load(spec, source)
+                windows = (
+                    windows_from_turns(parsed)
+                    if parsed and not spec.supports_timestamps else None
+                )
+                # `source` may be None: a recogniser that detects the language
+                # does so while transcribing, so asking it twice would run the
+                # model over the whole file for nothing.
+                result = engine.transcribe(path, source, windows)
+            providers.registry("asr").require_language(spec, result.language, "source")
+
+            segments = result.segments
+            if parsed:
+                segments = segment_tools.renumber(
+                    segment_tools.assign_speakers(segments, parsed)
+                )
+            if not segments:
+                raise ServiceError("No speech was found in the audio", status_code=422)
+            return {
+                "source_language": result.language,
+                "segments": segments,
+                "speakers": segment_tools.speakers_of(segments),
+                "asr_provider": spec.provider,
+                "asr_model": spec.id,
+                # Legacy key: the old response called every recogniser "whisper".
+                "whisper_model": spec.id,
+            }
+        finally:
+            path.unlink(missing_ok=True)
+
+    return _deferred(work, async_mode, f"transcribe:{spec.id}")
 
 
 def _parse_turns(raw: str) -> List[Dict]:
@@ -311,13 +370,15 @@ class TranslationRequest(BaseModel):
     engine: str = ""
     provider: str = ""
     model: str = ""
+    #: Long batches on a slow checkpoint outlive a tunnel's patience.
+    async_mode: bool = False
 
 
 @app.post("/translate")
 def translate(
     request: TranslationRequest,
     authorization: Optional[str] = Header(None),
-) -> Dict:
+):  # noqa: ANN201
     _authorize(authorization)
     source = _language(request.source_language)
     target = _language(request.target_language)
@@ -338,19 +399,23 @@ def translate(
     registry = providers.registry("translation")
     registry.require_language(spec, source, "source")
     registry.require_language(spec, target, "target")
+    texts = list(request.texts)
 
-    with jobs.lock:
-        engine = providers.translation.load(spec)
-        translations = engine.translate(request.texts, source, target)
-    if len(translations) != len(request.texts):
-        raise ServiceError("The translation model returned the wrong number of rows")
-    return {
-        "translations": [text.strip() for text in translations],
-        "translation_engine": spec.id,
-        "translation_model": spec.id,
-        "translation_provider": spec.provider,
-        "skipped": False,
-    }
+    def work() -> Dict:
+        with jobs.lock:
+            engine = providers.translation.load(spec)
+            translations = engine.translate(texts, source, target)
+        if len(translations) != len(texts):
+            raise ServiceError("The translation model returned the wrong number of rows")
+        return {
+            "translations": [text.strip() for text in translations],
+            "translation_engine": spec.id,
+            "translation_model": spec.id,
+            "translation_provider": spec.provider,
+            "skipped": False,
+        }
+
+    return _deferred(work, "true" if request.async_mode else "", f"translate:{spec.id}")
 
 
 @app.post("/synthesize")
@@ -419,8 +484,9 @@ def separate(
     provider: str = Form(""),
     model: str = Form(""),
     stem: str = Form("background"),
+    async_mode: str = Form(""),
     authorization: Optional[str] = Header(None),
-) -> Response:
+):  # noqa: ANN201
     """Split a track and return one stem.
 
     The caller asks for `background` (music and effects, the dub sits on this)
@@ -433,22 +499,32 @@ def separate(
     spec = providers.find("separation", provider or None,
                           model or providers.DEFAULTS["separation"])
     providers.registry("separation").require_available(spec)
-    workdir = Path(tempfile.mkdtemp(prefix="dubflow-separate-"))
-    try:
-        source = workdir / f"input{Path(audio.filename or 'audio.wav').suffix or '.wav'}"
-        with source.open("wb") as handle:
-            shutil.copyfileobj(audio.file, handle)
-        with jobs.lock:
-            engine = providers.separation.load(spec)
-            stems = engine.separate(source, workdir)
-        payload = stems[stem].read_bytes()
-    finally:
-        shutil.rmtree(workdir, ignore_errors=True)
-    return Response(
-        content=payload,
-        media_type="audio/wav",
-        headers={"X-Separation-Model": spec.id, "X-Separation-Stem": stem},
-    )
+    upload = _persist(audio)
+    headers = {"X-Separation-Model": spec.id, "X-Separation-Stem": stem}
+    deferred = job_config.as_bool(async_mode, False)
+
+    def work() -> Dict:
+        workdir = Path(tempfile.mkdtemp(prefix="dubflow-separate-"))
+        try:
+            source = workdir / f"input{upload.suffix}"
+            shutil.copyfile(upload, source)
+            with jobs.lock:
+                engine = providers.separation.load(spec)
+                stems = engine.separate(source, workdir)
+            # Separation is the largest transfer in the pipeline, so the stem is
+            # moved rather than read into memory and handed back as bytes.
+            kept = Path(tempfile.mkdtemp(prefix="dubflow-stem-")) / f"{stem}.wav"
+            shutil.move(str(stems[stem]), kept)
+            return {"file": str(kept), "media_type": "audio/wav", "headers": headers}
+        finally:
+            upload.unlink(missing_ok=True)
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    if deferred:
+        state = tasks.submit(work, f"separate:{spec.id}")
+        return JSONResponse(status_code=202, content=state)
+    produced = work()
+    return FileResponse(produced["file"], media_type="audio/wav", headers=headers)
 
 
 class AlignmentRequest(BaseModel):
