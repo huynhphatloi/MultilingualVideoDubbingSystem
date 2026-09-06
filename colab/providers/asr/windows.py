@@ -1,9 +1,4 @@
-"""Voice-activity windows for recognisers that have no timestamps of their own.
-
-faster-whisper is part of the base install and ships the Silero VAD it uses for
-`vad_filter`, so this borrows that model rather than adding a dependency. No
-Whisper checkpoint is loaded - only the small VAD.
-"""
+"""Voice-activity windows for recognisers without timestamps."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,7 +15,6 @@ def speech_windows(
     speech_pad_ms: int = 200,
     max_speech_s: float = 20.0,
 ) -> List["object"]:
-    """Speech regions in seconds, as `Window` tuples."""
     from providers.asr.base import Window
 
     try:

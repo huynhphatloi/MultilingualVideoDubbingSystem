@@ -18,4 +18,4 @@ class SourceSeparationProvider(ABC):
 
     @abstractmethod
     def separate(self, audio: Path, workdir: Path) -> Dict[str, Path]:
-        """Return {"speech": ..., "background": ...} as WAV files in workdir."""
+        pass

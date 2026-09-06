@@ -1,9 +1,3 @@
-"""Model slots and the job queue.
-
-Colab's free GPU cannot hold two large checkpoints, so a slot holds exactly one
-model and a single worker drains the queue. Both are easy to break silently -
-an extra cache key, a second worker thread - so both are pinned here.
-"""
 from __future__ import annotations
 
 import threading

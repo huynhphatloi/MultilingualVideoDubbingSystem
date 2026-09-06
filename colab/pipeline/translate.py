@@ -1,8 +1,4 @@
-"""Translate every segment, and write the subtitle file.
-
-When the source and target languages match, the text passes through untouched
-and no model is loaded - the same skip the /translate endpoint has always had.
-"""
+"""Translate segments and write subtitles."""
 from __future__ import annotations
 
 from pathlib import Path

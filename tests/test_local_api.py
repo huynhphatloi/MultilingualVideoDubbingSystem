@@ -1,10 +1,3 @@
-"""The local FFmpeg service: its stages, with the AI backend stubbed out.
-
-The n8n route runs a second copy of the pipeline - extract, merge, references,
-align, mix and render happen locally and only the model calls cross the tunnel.
-Those local stages are exercised here against a real video; every HTTP call to
-the notebook is replaced, so no model is downloaded and no GPU is needed.
-"""
 from __future__ import annotations
 
 import json
@@ -39,8 +32,8 @@ CONFIG = {
     "target_language": "vi",
     "asr": {"provider": "faster_whisper", "model": "small"},
     "translation": {"provider": "nllb", "model": "nllb"},
-    "tts": {"provider": "mms", "model": "mms", "voice_cloning": False},
-    "features": {"diarization": False, "voice_cloning": False, "alignment": True,
+    "tts": {"provider": "mms", "model": "mms"},
+    "features": {"diarization": False, "alignment": True,
                  "source_separation": False},
     "alignment_limits": {"min_speed": 0.75, "max_speed": 1.35, "tolerance": 0.05,
                          "allow_stretch": False},
@@ -85,7 +78,6 @@ def service(tmp_path, monkeypatch):  # noqa: ANN201
 
     monkeypatch.setattr(app, "ROOT", tmp_path)
     calls = []
-    #: Model call -> canned answer. Only these cross the tunnel in production.
     speech = {"Good morning everyone": 2.0, "Thank you for having me": 5.4}
 
     def fake_request(path, method="POST", **kwargs):  # noqa: ANN001, ANN202
@@ -106,8 +98,6 @@ def service(tmp_path, monkeypatch):  # noqa: ANN201
         if path == "/translate":
             texts = kwargs["json"]["texts"]
             return FakeResponse({"translations": [f"[vi] {text}" for text in texts]})
-        if path == "/reference":
-            return FakeResponse({"reference_id": "ref-" + str(len(calls))})
         if path == "/synthesize":
             source = kwargs["data"]["text"].split("] ", 1)[-1]
             return FakeResponse(
@@ -147,12 +137,10 @@ def test_the_whole_n8n_route_runs(service):
 
     results = {name: stage(client, name, job_id) for name in [
         "extract", "diarize", "transcribe", "merge_segments", "translate",
-        "voice_references", "synthesize", "align", "separate", "mix", "render",
+        "synthesize", "align", "separate", "mix", "render",
     ]}
 
-    # Optional stages skip themselves rather than failing the workflow, which is
-    # what lets one n8n graph serve every configuration.
-    for optional in ("diarize", "voice_references", "separate"):
+    for optional in ("diarize", "separate"):
         assert results[optional]["status"] == "skipped", optional
     assert results["mix"]["mode"] == "voice-over"
 
@@ -186,14 +174,15 @@ def test_alignment_retimes_the_clip_that_overruns(service):
 
 
 @ffmpeg
-def test_diarization_and_per_speaker_references(service, monkeypatch):
+def test_diarization_labels_every_segment_with_its_speaker(service, monkeypatch):
+    """Diarization no longer changes what the dub sounds like - no voice here
+    varies by speaker - but it still decides who each line belongs to, which is
+    what the transcript, the SRT and any future multi-voice engine read."""
     client, calls, tmp_path = service
     import app
 
     diarized = json.loads(json.dumps(CONFIG))
     diarized["features"]["diarization"] = True
-    diarized["features"]["voice_cloning"] = True
-    diarized["tts"] = {"provider": "f5", "model": "f5_vi", "voice_cloning": True}
     diarized["diarization"] = {"provider": "pyannote", "model": "pyannote_3_1"}
     original = app._colab_request
 
@@ -206,7 +195,7 @@ def test_diarization_and_per_speaker_references(service, monkeypatch):
 
     job_id = upload(client, tmp_path, enable_diarization="true")
     for name in ("extract", "diarize", "transcribe", "merge_segments", "translate",
-                 "voice_references", "synthesize"):
+                 "synthesize"):
         stage(client, name, job_id)
 
     job = client.get(f"/jobs/{job_id}").json()
@@ -214,20 +203,10 @@ def test_diarization_and_per_speaker_references(service, monkeypatch):
     assert [segment["speaker_id"] for segment in job["segments"]] == [
         "SPEAKER_00", "SPEAKER_01"
     ]
-    references = job["references"]
-    assert set(references) == {"SPEAKER_00", "SPEAKER_01"}
-    for speaker, entry in references.items():
-        assert (tmp_path / job_id / entry["file"]).exists()
-        assert entry["reference_id"]
-        assert entry["text"]
-
-    # Each segment was voiced with its own speaker's reference id.
-    used = [
-        payload["reference_id"]
-        for path, payload in calls
-        if path == "/synthesize" and "reference_id" in payload
-    ]
-    assert len(set(used)) == 2
+    assert job["speaker_summary"], "each speaker's share is recorded"
+    # Every line was still voiced, one clip per segment.
+    assert all(segment["tts_file"] for segment in job["segments"])
+    assert len([1 for path, _ in calls if path == "/synthesize"]) == len(job["segments"])
 
 
 @ffmpeg
@@ -246,11 +225,10 @@ def test_upload_refuses_a_configuration_the_backend_rejects(service, monkeypatch
         response = client.post(
             "/jobs/upload",
             files={"file": ("bad.mp4", handle, "video/mp4")},
-            data={"target_language": "vi", "tts_model": "f5_base"},
+            data={"target_language": "ja", "tts_model": "mms"},
         )
     assert response.status_code == 502
     assert "does not support target language" in response.json()["detail"]
-    # Nothing was stored for a job that could never run.
     assert list(tmp_path.glob("*/job.json")) == []
 
 
@@ -275,13 +253,8 @@ def test_rejected_containers(service):
     assert response.status_code == 400
 
 
-# ==========================================================================
-# Job history
-# ==========================================================================
 @ffmpeg
 def test_the_history_starts_empty_and_then_lists_the_upload(service):
-    """The browser used to hold the only record of a job id, so a reload lost
-    the run and a second upload replaced the first in the panel."""
     client, _, tmp_path = service
     assert client.get("/jobs").json() == {"jobs": [], "total": 0}
 
@@ -293,7 +266,7 @@ def test_the_history_starts_empty_and_then_lists_the_upload(service):
     assert row["source_filename"] == "source.mp4"
     assert row["target_language"] == "vi"
     assert row["created_at"], "a history list has to be orderable by more than mtime"
-    assert row["progress"] == "1/12", "upload is the one stage that has run"
+    assert row["progress"] == "1/11", "upload is the one stage that has run"
     assert row["download_url"] is None, "nothing is rendered yet"
 
 
@@ -311,13 +284,12 @@ def test_progress_follows_the_stages_that_ran(service):
     client, _, tmp_path = service
     job_id = upload(client, tmp_path)
     stage(client, "extract", job_id)
-    stage(client, "diarize", job_id)  # optional, off for this job: skips itself
+    stage(client, "diarize", job_id)
 
     row = next(r for r in client.get("/jobs").json()["jobs"] if r["job_id"] == job_id)
     assert "extract" in row["completed_stages"]
     assert "diarize" in row["skipped_stages"]
-    # A skipped stage leaves the denominator, so the bar cannot exceed itself.
-    assert row["progress"] == "2/11"
+    assert row["progress"] == "2/10"
     assert 0 < row["percent"] <= 100
 
 
@@ -337,8 +309,6 @@ def test_a_failed_job_keeps_its_reason_in_the_list(service, monkeypatch):
 
 
 def test_an_unreadable_folder_does_not_hide_the_rest(service, tmp_path):
-    """An upload interrupted midway leaves a folder without a usable manifest.
-    One of those must not take the whole history down with it."""
     client, _, _ = service
     (tmp_path / "abcdef123456").mkdir()
     (tmp_path / "abcdef123456" / "job.json").write_text("{ not json", encoding="utf-8")
@@ -357,13 +327,8 @@ def test_deleting_a_job_removes_it_and_its_files(service):
     assert client.get(f"/jobs/{job_id}").status_code == 404
 
 
-# ==========================================================================
-# Resuming a failed job
-# ==========================================================================
 @ffmpeg
 def test_a_finished_stage_is_reused_instead_of_re_run(service, monkeypatch):
-    """Transcription is the expensive stage. Re-running the workflow must not
-    pay for it twice just because a later stage failed."""
     import app
 
     client, calls, tmp_path = service
@@ -382,7 +347,6 @@ def test_a_finished_stage_is_reused_instead_of_re_run(service, monkeypatch):
 
 @ffmpeg
 def test_force_re_runs_a_finished_stage(service):
-    """Changing a model is a reason to run a stage again on purpose."""
     client, calls, tmp_path = service
     job_id = upload(client, tmp_path)
     stage(client, "extract", job_id)
@@ -405,7 +369,6 @@ def test_a_failed_job_resumes_at_the_stage_that_stopped(service, monkeypatch):
     stage(client, "transcribe", job_id)
     stage(client, "merge_segments", job_id)
 
-    # Translate fails the way the real one did: a 500 from the AI backend.
     real = app._stage_call
 
     def broken(path, **kwargs):  # noqa: ANN001, ANN003
@@ -417,7 +380,6 @@ def test_a_failed_job_resumes_at_the_stage_that_stopped(service, monkeypatch):
     assert client.post("/stages/translate", json={"job_id": job_id}).status_code == 500
     assert _load(tmp_path, job_id)["status"] == "failed"
 
-    # The operator fixes the backend and presses retry.
     monkeypatch.setattr(app, "_stage_call", real)
     monkeypatch.setattr(app.httpx, "post", lambda *a, **k: _Accepted())
     started = client.post(f"/jobs/{job_id}/start").json()
@@ -426,8 +388,6 @@ def test_a_failed_job_resumes_at_the_stage_that_stopped(service, monkeypatch):
     assert started["resumed_from"] == "translate"
     assert "transcribe" in started["reusing"]
     assert "translate" not in started["reusing"], "the failed stage must run again"
-    # The job is no longer failed, and the transcript it already produced is
-    # still there - which is the whole point of resuming rather than re-uploading.
     resumed = _load(tmp_path, job_id)
     assert resumed["status"] == "running"
     assert "error" not in resumed
@@ -455,3 +415,27 @@ class _Accepted:
 
 def _load(root, job_id):  # noqa: ANN001, ANN202
     return json.loads((root / job_id / "job.json").read_text(encoding="utf-8"))
+
+
+@ffmpeg
+def test_a_folder_this_build_would_not_name_can_still_be_deleted(service, tmp_path):
+    client, _, _ = service
+    stray = tmp_path / "fail0verte5t"
+    stray.mkdir()
+    (stray / "job.json").write_text(json.dumps({
+        "job_id": "fail0verte5t", "status": "running", "completed_stages": ["upload"],
+        "skipped_stages": [], "config": {}, "files": {}, "segments": [],
+    }), encoding="utf-8")
+
+    assert any(row["job_id"] == "fail0verte5t" for row in client.get("/jobs").json()["jobs"])
+    assert client.delete("/jobs/fail0verte5t").json()["deleted"] is True
+    assert not stray.exists()
+
+
+def test_delete_refuses_to_escape_the_job_root(service, tmp_path):
+    client, _, _ = service
+    outsider = tmp_path.parent / "not-a-job"
+    outsider.mkdir(exist_ok=True)
+    for attempt in ("../not-a-job", "..", "a/b"):
+        assert client.delete(f"/jobs/{attempt}").status_code in (404, 400, 405), attempt
+    assert outsider.exists(), "nothing outside the job root may be removed"

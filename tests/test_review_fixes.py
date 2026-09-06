@@ -1,8 +1,3 @@
-"""Regressions for the defects found in review.
-
-Each test names the failure it prevents, because every one of these shipped
-looking correct.
-"""
 from __future__ import annotations
 
 import pytest
@@ -14,8 +9,6 @@ from core.errors import InvalidRequest
 
 
 class TestEmptyFormFields:
-    """A multipart form cannot omit a field; empty must mean "not provided"."""
-
     def test_empty_string_falls_back_to_the_default(self):
         assert as_bool("", True) is True
         assert as_bool("   ", True) is True
@@ -31,22 +24,17 @@ class TestEmptyFormFields:
         with pytest.raises(InvalidRequest):
             as_bool("maybe", True)
 
-    def test_the_n8n_automatic_cloning_path_works(self, all_installed):
-        """The form sends every flag it declares, empty when untouched.
-
-        Reading that empty string as "off" turned "Voice Cloning: Automatic"
-        into "off", which then refused every clone-only engine - which is every
-        Vietnamese voice this project ships.
-        """
+    def test_the_n8n_empty_flag_path_works(self, all_installed):
+        """n8n cannot omit a form field: it sends every parameter it declares,
+        empty when the operator left it alone. An empty flag must read as
+        absent, not as false."""
         built = config.build({
             "target_language": "vi",
-            "tts_model": "f5_vi",
+            "tts_model": "edge",
             "enable_diarization": "false",
-            "enable_voice_cloning": "",      # "Automatic"
-            "enable_alignment": "true",
+            "enable_alignment": "",
             "enable_source_separation": "false",
         })
-        assert built.features.voice_cloning is True
         assert built.features.alignment is True
         assert built.features.diarization is False
 
@@ -56,8 +44,6 @@ class TestEmptyFormFields:
 
 
 class TestStageRerun:
-    """A retried stage must not be counted twice."""
-
     def test_completed_stages_holds_each_name_once(self, tmp_path, monkeypatch):
         import jobs
 
@@ -77,10 +63,8 @@ class TestStageRerun:
 
 
 class TestModelResidency:
-    """A slot is freed as soon as no later stage of the job needs it."""
-
     def default_job(self, **features):  # noqa: ANN201
-        base = {"diarization": False, "alignment": True, "voice_cloning": False,
+        base = {"diarization": False, "alignment": True,
                 "source_separation": False}
         base.update(features)
         return {"config": {"features": base}}
@@ -109,7 +93,6 @@ class TestModelResidency:
     def test_the_pipeline_frees_the_recogniser_before_the_voice_loads(
         self, tmp_path, monkeypatch
     ):
-        """Peak memory is one model, not three - the point of the whole scheme."""
         import jobs
         from core import runtime
 
@@ -132,7 +115,7 @@ class TestModelResidency:
             "job_id": "eeeeeeeeeeee", "status": "queued", "completed_stages": [],
             "skipped_stages": [], "files": {}, "segments": [],
             "config": {"target_language": "vi", "features": {
-                "diarization": False, "alignment": True, "voice_cloning": False,
+                "diarization": False, "alignment": True,
                 "source_separation": False}},
             "request": {"target_language": "vi"},
         }
@@ -154,9 +137,9 @@ class TestAlignmentPlanLength:
         from dubflow_core import alignment
 
         segments = [
-            {"start": 0.0, "end": 2.0},                            # no clip
+            {"start": 0.0, "end": 2.0},
             {"start": 2.0, "end": 4.0, "tts_duration_raw": 4.0},
-            {"start": 4.0, "end": 6.0},                            # no clip
+            {"start": 4.0, "end": 6.0},
         ]
         plans = alignment.plan_segments(segments, media_duration=10.0)
         assert len(plans) == len(segments), "plans would zip onto the wrong lines"
@@ -165,8 +148,6 @@ class TestAlignmentPlanLength:
 
 
 class TestSharedMixing:
-    """Both routes build the same filter graphs from one module."""
-
     def test_the_two_services_use_the_same_gains(self):
         from dubflow_core import mixing
 
@@ -174,7 +155,6 @@ class TestSharedMixing:
         separated = mixing.blend_filtergraph(separated=True)
         assert "volume=0.25" in voiceover and "volume=1.5" in voiceover
         assert "volume=1.0" in separated
-        # A separation stem comes back at the model's rate, not the mix rate.
         assert voiceover.count("aresample=48000") == 2
 
     def test_atempo_is_chained_past_the_filter_limit(self):
@@ -196,14 +176,6 @@ class TestSharedMixing:
 
 
 class TestOutdatedBackend:
-    """An alive session running old code must be named as such, everywhere.
-
-    The first version of this diagnostic lived only on /capabilities and told
-    the operator to "re-run all cells" - which cannot work, because `import` is
-    a no-op in a running session and the previous server keeps answering on the
-    fresh tunnel URL.
-    """
-
     def service(self, monkeypatch, status=404, health=None):  # noqa: ANN201
         import sys
         from pathlib import Path
@@ -248,7 +220,6 @@ class TestOutdatedBackend:
         assert payload["available"] is False
         assert payload["reason"] == "outdated"
         assert "Restart session" in payload["hint"]
-        # The UI still gets enough to render itself.
         assert payload["languages"] and payload["stages"]
 
     def test_an_ordinary_error_is_not_blamed_on_the_version(self, monkeypatch):

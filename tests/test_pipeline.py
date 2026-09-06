@@ -1,11 +1,3 @@
-"""The whole pipeline, end to end, with real FFmpeg and stand-in models.
-
-The models are replaced, not the stages: extract, merge, translate, synthesize,
-align, mix and render all run their real code against a real video file. That is
-what catches the mistakes unit tests miss - an ffmpeg filter that rejects its
-input, a segment key a later stage expected, a file the render stage cannot
-find.
-"""
 from __future__ import annotations
 
 import shutil
@@ -26,8 +18,6 @@ ffmpeg = pytest.mark.skipif(
     reason="FFmpeg is required for the pipeline test",
 )
 
-#: Three lines by two speakers, the second one deliberately long enough that
-#: alignment has to shorten it.
 SCRIPT = [
     ("SPEAKER_00", 0.5, 3.0, "Good morning everyone", 2.0),
     ("SPEAKER_01", 3.5, 6.5, "Thank you for having me", 5.4),
@@ -68,8 +58,6 @@ def tone(path: Path, seconds: float, frequency: int = 440) -> None:
 
 class FakeASR(ASRProvider):
     name = "test/asr"
-    #: What the pipeline asked for, so the tests can prove it does not run a
-    #: separate detection pass over the whole file.
     seen = []
 
     def detect_language(self, audio):  # noqa: ANN001, ANN201
@@ -95,8 +83,6 @@ class FakeTranslation:
 
 
 class FakeTTS(TTSProvider):
-    """Writes a tone as long as the script says that line takes to say."""
-
     name = "test/tts"
 
     def __init__(self, spec):  # noqa: ANN001
@@ -106,7 +92,7 @@ class FakeTTS(TTSProvider):
     def synthesize(self, request, out):  # noqa: ANN001, ANN201
         lengths = {text: seconds for _, _, _, text, seconds in SCRIPT}
         source = request.text.split("] ", 1)[-1]
-        self.calls.append((request.speaker_id, str(request.reference or "")))
+        self.calls.append(request.speaker_id)
         tone(out, lengths.get(source, 1.0))
 
 
@@ -119,7 +105,6 @@ class FakeDiarization:
 
 @pytest.fixture
 def stub_models(monkeypatch):  # noqa: ANN201
-    """Replace only the models. Every stage runs its real code."""
     voice = {}
 
     def load_tts(spec, language=None):  # noqa: ANN001, ANN202
@@ -158,15 +143,11 @@ def test_the_default_pipeline_produces_a_video(tmp_path, monkeypatch, stub_model
         "extract", "transcribe", "merge_segments", "translate", "synthesize",
         "align", "mix", "render",
     ]
-    # The optional stages skipped themselves rather than failing.
-    assert set(job["skipped_stages"]) == {
-        "diarize", "voice_references", "separate"
-    }
+    assert set(job["skipped_stages"]) == {"diarize", "separate"}
 
     output = folder / job["files"]["output"]
     assert output.exists() and output.stat().st_size > 0
     assert (folder / job["files"]["subtitle"]).read_text(encoding="utf-8").startswith("1\n")
-    # One speaker when diarization is off, which is the old behaviour.
     assert job["speakers"] == ["SPEAKER_00"]
     assert job["mix_mode"] == "voice-over"
 
@@ -186,7 +167,6 @@ def test_alignment_shortens_the_line_that_would_have_overrun(tmp_path, monkeypat
     assert long["tts_duration_raw"] == pytest.approx(5.4, abs=0.2)
     assert long["alignment_status"] in {"aligned", "clamped"}
     assert long["alignment_speed"] > 1.0
-    # The clip on disk really was shortened, not just annotated.
     assert long["tts_duration_final"] < long["tts_duration_raw"]
     assert (folder / long["tts_file"]).exists()
     assert set(job["alignment"]) <= {"fits", "aligned", "clamped", "unmeasured"}
@@ -203,9 +183,13 @@ def test_alignment_can_be_switched_off(tmp_path, monkeypatch, stub_models):
 
 
 @ffmpeg
-def test_diarization_gives_each_speaker_their_own_reference(tmp_path, monkeypatch, stub_models):
-    job, folder = run_job(tmp_path, monkeypatch, {
-        "target_language": "vi", "source_language": "en", "tts_model": "f5_vi",
+def test_diarization_carries_the_speaker_through_to_the_voice(tmp_path, monkeypatch, stub_models):
+    """No engine in this build varies its voice by speaker, so the dub sounds
+    the same either way. What diarization still does is decide who owns each
+    line, and that label reaches the TTS request - which is the hook a
+    multi-voice provider would use. See "Future work" in the README."""
+    job, _ = run_job(tmp_path, monkeypatch, {
+        "target_language": "vi", "source_language": "en", "tts_model": "mms",
         "enable_diarization": "true",
     })
 
@@ -214,23 +198,7 @@ def test_diarization_gives_each_speaker_their_own_reference(tmp_path, monkeypatc
     assert [segment["speaker_id"] for segment in job["segments"]] == [
         "SPEAKER_00", "SPEAKER_01", "SPEAKER_00"
     ]
-
-    references = job["references"]
-    assert set(references) == {"SPEAKER_00", "SPEAKER_01"}
-    for speaker, entry in references.items():
-        clip = folder / entry["file"]
-        assert clip.exists() and clip.stat().st_size > 0
-        assert entry["seconds"] >= 1.0
-        assert entry["exclusive"] is True
-        # The reference carries what that speaker said, for the engines that
-        # want the transcript alongside the audio.
-        assert entry["text"]
-
-    engine = stub_models["engine"]
-    used = {speaker: reference for speaker, reference in engine.calls}
-    assert used["SPEAKER_00"].endswith("SPEAKER_00.wav")
-    assert used["SPEAKER_01"].endswith("SPEAKER_01.wav")
-    assert used["SPEAKER_00"] != used["SPEAKER_01"]
+    assert set(stub_models["engine"].calls) == {"SPEAKER_00", "SPEAKER_01"}
 
 
 @ffmpeg
@@ -267,7 +235,6 @@ def test_public_status_reports_progress_against_the_planned_stages(tmp_path, mon
     assert public["progress"] == "8/8"
     assert public["status"] == "completed"
     assert public["download_url"].endswith("/download")
-    # Legacy keys the previous version published.
     assert public["whisper_model"] == "small"
     assert public["translation_engine"] == "nllb"
     assert public["tts_engine"] == "mms"
@@ -276,11 +243,6 @@ def test_public_status_reports_progress_against_the_planned_stages(tmp_path, mon
 
 @ffmpeg
 def test_language_detection_is_not_a_second_pass(tmp_path, monkeypatch, stub_models):
-    """A recogniser that detects while transcribing is asked once, not twice.
-
-    Calling detect_language first ran Whisper over the whole file before the
-    real transcription, which doubled the slowest stage for the default job.
-    """
     FakeASR.seen = []
     job, _ = run_job(tmp_path, monkeypatch, {
         "target_language": "vi", "tts_model": "mms",

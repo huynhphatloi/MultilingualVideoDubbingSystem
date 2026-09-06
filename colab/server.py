@@ -1,18 +1,4 @@
-"""Google Colab AI backend: HTTP only.
-
-Every model lives behind a provider (colab/providers) and every stage behind a
-pipeline module (colab/pipeline). This file does authentication, request
-parsing, and turning a ServiceError into an HTTP response - nothing else. That
-is why it no longer imports torch, transformers or faster-whisper: a session
-where none of the optional engines are installed still starts, still answers
-/capabilities, and reports each engine as unavailable instead of crashing.
-
-Two routes into the same pipeline:
-
-* the stage endpoints (/transcribe, /translate, /synthesize, /diarize, /align)
-  which n8n orchestrates and which any other application can reuse;
-* POST /jobs, which runs all eleven stages here and needs nothing but this URL.
-"""
+"""HTTP API for notebook and local model inference."""
 from __future__ import annotations
 
 import json
@@ -24,7 +10,6 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-#: The shared, dependency-free package lives beside colab/ in the repository.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -55,26 +40,16 @@ import pipeline  # noqa: E402
 import tasks  # noqa: E402
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
-#: Only the fallback when a request omits the model.
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", providers.DEFAULTS["asr"])
 
 app = FastAPI(title="DubFlow Colab AI", version="4.0")
 
-_REFERENCE_DIR = Path(tempfile.gettempdir()) / "dubflow-references"
-_REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
-_REFERENCE_LIMIT = 16
-#: A reference clip may carry the transcript the cloning engines want.
-_REFERENCE_TEXT = _REFERENCE_DIR / "texts.json"
-
-
 @app.exception_handler(ServiceError)
 def _service_error(_: Request, exc: ServiceError) -> JSONResponse:
-    """One place where a provider's error becomes an HTTP response."""
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
 
 def _authorize(authorization: Optional[str]) -> None:
-    """Bearer check. The tunnel is public, so the comparison is constant-time."""
     if not AUTH_TOKEN:
         return
     if not secrets.compare_digest(authorization or "", f"Bearer {AUTH_TOKEN}"):
@@ -86,12 +61,7 @@ def _language(value: str, allow_auto: bool = False) -> Optional[str]:
 
 
 def _persist(upload: UploadFile) -> Path:
-    """Copy an upload to a file the request's lifetime does not own.
-
-    A background task outlives the request that started it, and FastAPI closes
-    the upload's spooled file as soon as the response is sent - so the bytes
-    have to be somewhere else before that happens. The task deletes it.
-    """
+    """Persist an upload before its request-scoped stream closes."""
     suffix = Path(upload.filename or "audio.wav").suffix or ".wav"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
         shutil.copyfileobj(upload.file, handle)
@@ -99,13 +69,7 @@ def _persist(upload: UploadFile) -> Path:
 
 
 def _deferred(work, async_mode: str, label: str):  # noqa: ANN001, ANN201
-    """Run `work` now, or hand it to a background task and answer immediately.
-
-    A Cloudflare quick tunnel abandons a request after about a hundred seconds.
-    Transcribing or separating a real video takes longer, so the caller asks for
-    async_mode, gets a task id, and polls GET /tasks/{id} - every request short
-    enough to survive, however long the work itself takes.
-    """
+    """Run work now or return an asynchronous task."""
     if job_config.as_bool(async_mode, False):
         return JSONResponse(status_code=202, content=tasks.submit(work, label))
     return work()
@@ -113,15 +77,12 @@ def _deferred(work, async_mode: str, label: str):  # noqa: ANN001, ANN201
 
 @app.get("/tasks/{task_id}")
 def read_task(task_id: str, authorization: Optional[str] = Header(None)) -> Dict:
-    """Poll a background task. `done` is true once there is a result or an
-    error; `result` is exactly what the synchronous route would have returned."""
     _authorize(authorization)
     return tasks.public(task_id)
 
 
 @app.get("/tasks/{task_id}/download")
 def download_task(task_id: str, authorization: Optional[str] = Header(None)):  # noqa: ANN201
-    """The file a task produced, for the stages whose answer is audio."""
     _authorize(authorization)
     payload = tasks.result_or_raise(task_id)
     if not payload or not payload.get("file"):
@@ -133,16 +94,9 @@ def download_task(task_id: str, authorization: Optional[str] = Header(None)):  #
     )
 
 
-# ==========================================================================
-# Capabilities
-# ==========================================================================
 @app.get("/capabilities")
 def capabilities(authorization: Optional[str] = Header(None)) -> Dict:
-    """Everything this session offers, and what it can actually run.
-
-    The frontend and n8n read this instead of keeping their own model lists,
-    which is what used to let the three drift apart.
-    """
+    """Return model metadata and runtime availability."""
     if AUTH_TOKEN and authorization:
         _authorize(authorization)
     payload = providers.capabilities()
@@ -154,7 +108,6 @@ def capabilities(authorization: Optional[str] = Header(None)) -> Dict:
 
 @app.get("/health")
 def health() -> Dict:
-    """Liveness, plus the pre-4.0 shape so existing callers keep working."""
     asr = providers.registry("asr")
     translation = providers.registry("translation")
     tts = providers.registry("tts")
@@ -164,7 +117,6 @@ def health() -> Dict:
         "device": device(),
         "services": ["transcription", "translation", "speech", "diarization", "pipeline"],
         "loaded": loaded(),
-        # Legacy keys.
         "whisper_model": WHISPER_MODEL,
         "whisper_models": sorted(
             spec.id for spec in asr.for_provider("faster_whisper")
@@ -175,11 +127,9 @@ def health() -> Dict:
             spec.id: {
                 "available": spec.available(),
                 "package": spec.optional_package,
-                "needs_reference": spec.reference_required,
             }
             for spec in tts.models()
         },
-        # New summary; /capabilities has the detail.
         "asr_models": [spec.id for spec in asr.models() if spec.available()],
         "capabilities_url": "/capabilities",
         "languages": L.listing(),
@@ -191,61 +141,6 @@ def languages() -> Dict:
     return {"languages": L.listing()}
 
 
-# ==========================================================================
-# Voice references
-# ==========================================================================
-def _reference_texts() -> Dict[str, str]:
-    if not _REFERENCE_TEXT.exists():
-        return {}
-    try:
-        return json.loads(_REFERENCE_TEXT.read_text(encoding="utf-8"))
-    except ValueError:
-        return {}
-
-
-def _store_reference(upload: UploadFile, text: str) -> str:
-    reference_id = jobs.new_id()[:16]
-    target = _REFERENCE_DIR / f"{reference_id}.wav"
-    with Scratch(Path(upload.filename or "ref.wav").suffix or ".wav") as raw:
-        with raw.open("wb") as handle:
-            shutil.copyfileobj(upload.file, handle)
-        # Cloning models expect a clean mono clip; normalise whatever arrives.
-        normalise_speech(raw, target)
-
-    stored = sorted(_REFERENCE_DIR.glob("*.wav"), key=lambda path: path.stat().st_mtime)
-    keep = {path.stem for path in stored[-_REFERENCE_LIMIT:]}
-    for stale in stored[:-_REFERENCE_LIMIT]:
-        stale.unlink(missing_ok=True)
-    texts = {name: value for name, value in _reference_texts().items() if name in keep}
-    if text.strip():
-        texts[reference_id] = text.strip()
-    _REFERENCE_TEXT.write_text(json.dumps(texts, ensure_ascii=False), encoding="utf-8")
-    return reference_id
-
-
-def _reference_path(reference_id: Optional[str]) -> Optional[Path]:
-    if not reference_id:
-        return None
-    candidate = _REFERENCE_DIR / f"{Path(reference_id).name}.wav"
-    return candidate if candidate.exists() else None
-
-
-@app.post("/reference")
-def upload_reference(
-    audio: UploadFile = File(...),
-    text: str = Form(""),
-    authorization: Optional[str] = Header(None),
-) -> Dict:
-    """Store one speaker sample. `text` is what the clip says, which CosyVoice
-    requires and F5 uses to skip transcribing the clip itself."""
-    _authorize(authorization)
-    reference_id = _store_reference(audio, text)
-    return {"reference_id": reference_id, "has_text": bool(text.strip())}
-
-
-# ==========================================================================
-# Stage endpoints
-# ==========================================================================
 @app.post("/diarize")
 def diarize(
     audio: UploadFile = File(...),
@@ -256,7 +151,6 @@ def diarize(
     async_mode: str = Form(""),
     authorization: Optional[str] = Header(None),
 ):  # noqa: ANN201
-    """Who spoke when, as turns the caller can merge with a transcript."""
     _authorize(authorization)
     spec = providers.find("diarization", provider or None,
                           model or providers.DEFAULTS["diarization"])
@@ -293,8 +187,6 @@ def transcribe(
     async_mode: str = Form(""),
     authorization: Optional[str] = Header(None),
 ):  # noqa: ANN201
-    """Speech to text. `turns` is optional diarization JSON: when a recogniser
-    has no timestamps of its own, those turns become its windows."""
     _authorize(authorization)
     source = _language(language, allow_auto=True)
     spec = providers.find("asr", provider or None, model or WHISPER_MODEL)
@@ -317,9 +209,6 @@ def transcribe(
                     windows_from_turns(parsed)
                     if parsed and not spec.supports_timestamps else None
                 )
-                # `source` may be None: a recogniser that detects the language
-                # does so while transcribing, so asking it twice would run the
-                # model over the whole file for nothing.
                 result = engine.transcribe(path, source, windows)
             providers.registry("asr").require_language(spec, result.language, "source")
 
@@ -336,7 +225,6 @@ def transcribe(
                 "speakers": segment_tools.speakers_of(segments),
                 "asr_provider": spec.provider,
                 "asr_model": spec.id,
-                # Legacy key: the old response called every recogniser "whisper".
                 "whisper_model": spec.id,
             }
         finally:
@@ -366,11 +254,9 @@ class TranslationRequest(BaseModel):
     source_language: str
     target_language: str
     texts: List[str]
-    #: Legacy name, still accepted.
     engine: str = ""
     provider: str = ""
     model: str = ""
-    #: Long batches on a slow checkpoint outlive a tunnel's patience.
     async_mode: bool = False
 
 
@@ -426,8 +312,6 @@ def synthesize(
     engine: str = Form(""),
     provider: str = Form(""),
     model: str = Form(""),
-    reference_id: str = Form(""),
-    reference_text: str = Form(""),
     authorization: Optional[str] = Header(None),
 ) -> Response:
     _authorize(authorization)
@@ -444,19 +328,11 @@ def synthesize(
     if not 0.5 <= speed <= 2.0:
         raise InvalidRequest("Speed must be between 0.5 and 2.0")
 
-    reference = _reference_path(reference_id)
-    stored_text = _reference_texts().get(reference_id or "", "")
     with Scratch(".wav") as output:
         with jobs.lock:
             engine_instance = providers.tts.load(spec, target)
             engine_instance.synthesize(
-                SpeechRequest(
-                    text=text,
-                    language=target,
-                    speed=speed,
-                    reference=reference,
-                    reference_text=reference_text.strip() or stored_text,
-                ),
+                SpeechRequest(text=text, language=target, speed=speed),
                 output,
             )
         payload = output.read_bytes()
@@ -487,12 +363,6 @@ def separate(
     async_mode: str = Form(""),
     authorization: Optional[str] = Header(None),
 ):  # noqa: ANN201
-    """Split a track and return one stem.
-
-    The caller asks for `background` (music and effects, the dub sits on this)
-    or `speech` (the isolated original voice). Only the requested stem crosses
-    the tunnel, which halves what is the largest transfer in the pipeline.
-    """
     _authorize(authorization)
     if stem not in {"background", "speech"}:
         raise InvalidRequest("stem must be 'background' or 'speech'")
@@ -511,8 +381,6 @@ def separate(
             with jobs.lock:
                 engine = providers.separation.load(spec)
                 stems = engine.separate(source, workdir)
-            # Separation is the largest transfer in the pipeline, so the stem is
-            # moved rather than read into memory and handed back as bytes.
             kept = Path(tempfile.mkdtemp(prefix="dubflow-stem-")) / f"{stem}.wav"
             shutil.move(str(stems[stem]), kept)
             return {"file": str(kept), "media_type": "audio/wav", "headers": headers}
@@ -537,11 +405,6 @@ class AlignmentRequest(BaseModel):
 
 @app.post("/align")
 def align(request: AlignmentRequest, authorization: Optional[str] = Header(None)) -> Dict:
-    """Plan the speed change for each segment without touching any audio.
-
-    The caller applies the plan itself, which is how the local FFmpeg service
-    aligns without shipping every clip to Colab and back.
-    """
     _authorize(authorization)
     from dubflow_core import alignment
 
@@ -566,16 +429,8 @@ def align(request: AlignmentRequest, authorization: Optional[str] = Header(None)
     }
 
 
-# ==========================================================================
-# End-to-end pipeline
-# ==========================================================================
 @app.post("/validate")
 def validate(request: Dict[str, Any], authorization: Optional[str] = Header(None)) -> Dict:
-    """Check a job configuration without creating one.
-
-    The local API calls this when a video is uploaded so an impossible
-    combination is refused immediately rather than four stages later.
-    """
     _authorize(authorization)
     return {"valid": True, "config": job_config.build(request).public()}
 
@@ -586,12 +441,7 @@ async def create_job(
     video: UploadFile = File(...),
     authorization: Optional[str] = Header(None),
 ) -> Dict:
-    """Dub a video end to end. Returns immediately; poll GET /jobs/{id}.
-
-    Every field except the video is read from the form, so the old three
-    (`model`, `translation_engine`, `tts_engine`) and the new ones
-    (`asr_provider`, `enable_diarization`, ...) are both accepted.
-    """
+    """Queue a complete dubbing job."""
     _authorize(authorization)
     form = await request.form()
     values = {
@@ -623,14 +473,12 @@ def get_job(job_id: str, authorization: Optional[str] = Header(None)) -> Dict:
 
 @app.get("/jobs/{job_id}/segments")
 def get_segments(job_id: str, authorization: Optional[str] = Header(None)) -> Dict:
-    """The full canonical segments, including speakers and alignment metadata."""
     _authorize(authorization)
     job = jobs.read(job_id)
     return {
         "job_id": job_id,
         "segments": job.get("segments", []),
         "turns": job.get("turns", []),
-        "references": job.get("references", {}),
     }
 
 
@@ -667,7 +515,6 @@ def delete_job(job_id: str, authorization: Optional[str] = Header(None)) -> Dict
 
 @app.post("/unload")
 def unload(authorization: Optional[str] = Header(None)) -> Dict:
-    """Drop every resident model. Useful when a Colab GPU is nearly full."""
     _authorize(authorization)
     release_all()
     return {"loaded": loaded()}

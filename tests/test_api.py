@@ -1,4 +1,3 @@
-"""The HTTP surface of the Colab service, including its legacy shape."""
 from __future__ import annotations
 
 import io
@@ -39,9 +38,8 @@ def test_health_keeps_the_keys_the_previous_version_published(client):
     assert set(payload["whisper_models"]) >= {"small", "large-v3", "large-v3-turbo"}
     assert set(payload["translation_engines"]) >= {"nllb", "seamless"}
     engines = payload["tts_engines"]
-    assert {"mms", "edge", "f5_vi", "f5_base"} <= set(engines)
+    assert {"mms", "edge"} <= set(engines)
     assert engines["mms"]["available"] is True
-    assert engines["f5_vi"]["needs_reference"] is True
     assert payload["languages"][0]["code"]
 
 
@@ -63,10 +61,10 @@ def test_validate_accepts_the_old_parameter_names(client):
 
 def test_validate_refuses_an_impossible_pairing_with_a_readable_message(client):
     response = client.post("/validate", json={
-        "target_language": "vi", "tts_model": "f5_base"
+        "target_language": "ja", "tts_model": "mms"
     })
     assert response.status_code == 400
-    assert "does not support target language 'vi'" in response.json()["detail"]
+    assert "does not support target language 'ja'" in response.json()["detail"]
 
 
 def test_translate_skips_when_the_languages_match(client):
@@ -76,7 +74,6 @@ def test_translate_skips_when_the_languages_match(client):
     payload = response.json()
     assert payload["translations"] == ["xin chao"]
     assert payload["skipped"] is True
-    # The legacy key is still there.
     assert payload["translation_engine"] == "nllb"
 
 
@@ -141,16 +138,10 @@ def test_authentication_is_still_enforced_when_a_token_is_set(client, monkeypatc
     assert client.get(
         "/jobs", headers={"Authorization": "Bearer secret"}
     ).status_code == 200
-    # /health stays open so the local service can probe it.
     assert client.get("/health").status_code == 200
 
 
 def test_creating_a_job_reads_both_the_old_and_new_form_fields(client, monkeypatch, tmp_path):
-    """The multipart body carries the video plus every setting as form fields.
-
-    The worker is stubbed out: running it would download real checkpoints, and
-    the pipeline itself is covered by test_pipeline with stand-in models.
-    """
     import jobs
 
     monkeypatch.setattr(jobs, "ROOT", tmp_path)
@@ -173,7 +164,6 @@ def test_creating_a_job_reads_both_the_old_and_new_form_fields(client, monkeypat
     assert payload["status"] == "queued"
     assert payload["whisper_model"] == "large-v3-turbo"
     assert payload["config"]["features"]["alignment"] is False
-    # An optional stage that is off is not counted in the progress denominator.
     assert payload["progress"] == "0/7"
     assert client.get(f"/jobs/{payload['job_id']}").status_code == 200
 

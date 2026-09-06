@@ -1,9 +1,4 @@
-"""Demucs, driven through its command line.
-
-The Python API changes between releases; the CLI has been stable, and it is what
-the project documents. `--two-stems=vocals` gives exactly the split this
-pipeline wants and skips the drum/bass/other decomposition.
-"""
+"""Demucs source separation through its command line."""
 from __future__ import annotations
 
 import shutil

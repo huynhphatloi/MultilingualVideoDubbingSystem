@@ -1,9 +1,4 @@
-"""Fit each generated line into the gap it has to fill.
-
-Optional, on by default. A line that runs long is sped up as far as the
-configured limit allows; if that is not enough the overrun is recorded rather
-than hidden, so a caller can see which lines will overlap.
-"""
+"""Fit generated speech into its original time windows."""
 from __future__ import annotations
 
 from pathlib import Path

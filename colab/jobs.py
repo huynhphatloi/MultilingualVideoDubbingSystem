@@ -1,10 +1,4 @@
-"""The job store and the single-worker queue.
-
-One worker drains the queue so jobs wait for each other instead of fighting over
-one GPU. Colab storage is ephemeral, so the manifest is written after every
-stage: a dropped session loses the job, but a crashed stage leaves a readable
-record of where it stopped.
-"""
+"""Job storage and the single-worker queue."""
 from __future__ import annotations
 
 import json
@@ -27,7 +21,6 @@ JOB_ID_LENGTH = 12
 
 
 def _default_root() -> Path:
-    """Colab keeps user files under /content; fall back anywhere else."""
     candidate = Path(os.getenv("JOBS_ROOT", "/content/dubflow-jobs"))
     try:
         candidate.mkdir(parents=True, exist_ok=True)
@@ -39,17 +32,12 @@ def _default_root() -> Path:
 
 
 ROOT = _default_root()
-#: Colab disk is finite and shared; keep only the most recent jobs.
 LIMIT = int(os.getenv("JOBS_LIMIT", "20"))
-#: Free a model as soon as no later stage of the job needs it. Set
-#: DUBFLOW_KEEP_MODELS=1 on a machine with memory to spare, where holding them
-#: for the next job is worth more than the peak.
 KEEP_MODELS = os.getenv("DUBFLOW_KEEP_MODELS", "").strip().lower() in {"1", "true", "yes"}
 
 _queue: "queue.Queue[str]" = queue.Queue()
 _worker: Optional[threading.Thread] = None
 _worker_lock = threading.Lock()
-#: One model-loading job at a time, shared with the per-stage HTTP routes.
 lock = threading.RLock()
 
 
@@ -102,8 +90,6 @@ def listing() -> List[Dict]:
 
 
 def public(job: Dict) -> Dict:
-    """The status payload. Keeps the pre-refactor keys alongside the new ones so
-    an existing caller does not have to change the day this ships."""
     planned = job.get("planned_stages") or pipeline.planned_stages(job)
     done = [name for name in job.get("completed_stages", []) if name in planned]
     config = job.get("config") or {}
@@ -119,7 +105,6 @@ def public(job: Dict) -> Dict:
         "config": config,
         "source_language": job.get("source_language") or config.get("source_language"),
         "target_language": config.get("target_language"),
-        # Legacy keys, unchanged in meaning.
         "whisper_model": (config.get("asr") or {}).get("model"),
         "translation_engine": (config.get("translation") or {}).get("model"),
         "tts_engine": tts.get("model"),
@@ -184,7 +169,6 @@ def queued() -> int:
 
 
 def process(job_id: str) -> None:
-    """Run every stage of one job, recording progress as it goes."""
     try:
         job = read(job_id)
     except ServiceError:
@@ -226,11 +210,6 @@ def process(job_id: str) -> None:
 
 
 def _mark_completed(job: Dict, name: str) -> None:
-    """Record a finished stage once, however many times it runs.
-
-    A stage can run again - a retry, or an operator re-running one node - and an
-    appended duplicate makes the progress count exceed the number of stages.
-    """
     completed = job.setdefault("completed_stages", [])
     if name not in completed:
         completed.append(name)
@@ -249,7 +228,6 @@ def _loop() -> None:
 
 
 def ensure_worker() -> None:
-    """One worker, so jobs queue instead of fighting over a single GPU."""
     global _worker
     with _worker_lock:
         if _worker is None or not _worker.is_alive():

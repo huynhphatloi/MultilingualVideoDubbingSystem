@@ -1,19 +1,10 @@
-"""Fitting generated speech back into the original time window.
-
-Before this stage existed the pipeline measured `tts_duration` and then ignored
-it: every clip was laid down at its own length, so a translation that ran long
-talked over the next line. The arithmetic lives here, away from ffmpeg, so it
-can be tested without audio.
-"""
+"""Speech-duration alignment calculations."""
 from __future__ import annotations
 
 from typing import Dict, List, NamedTuple, Optional, Sequence
 
-#: ffmpeg's atempo is transparent well past these, but a dub that races is
-#: worse than one that overruns slightly. Both ends stay configurable.
 DEFAULT_MIN_SPEED = 0.75
 DEFAULT_MAX_SPEED = 1.35
-#: Below this the re-encode costs more than the drift it removes.
 DEFAULT_TOLERANCE = 0.05
 
 
@@ -21,8 +12,6 @@ class Limits(NamedTuple):
     min_speed: float = DEFAULT_MIN_SPEED
     max_speed: float = DEFAULT_MAX_SPEED
     tolerance: float = DEFAULT_TOLERANCE
-    #: Stretching short speech to fill a gap sounds worse than the silence it
-    #: replaces, so it is off unless a caller asks for it.
     allow_stretch: bool = False
 
 
@@ -33,11 +22,6 @@ class Plan(NamedTuple):
     overflow: float
 
 
-#: `fits`      - within tolerance, nothing to do.
-#: `aligned`   - sped up, and it now fits the window.
-#: `clamped`   - the speed limit was reached and the clip still overruns.
-#: `stretched` - slowed down to fill the window (opt-in).
-#: `unmeasured`- no TTS duration was recorded, so nothing could be decided.
 STATUSES = ("fits", "aligned", "clamped", "stretched", "unmeasured")
 
 
@@ -47,12 +31,7 @@ def window_for(
     next_start: Optional[float],
     media_duration: Optional[float],
 ) -> float:
-    """How long this line may run before it collides with the next one.
-
-    A translation is allowed to spill into the silence that follows it, which is
-    most of what makes alignment bearable; it is not allowed to spill into the
-    next speaker.
-    """
+    """Return the available duration before the next segment."""
     limit = next_start if next_start is not None else media_duration
     if limit is None:
         return max(0.0, float(end) - float(start))
@@ -87,10 +66,7 @@ def plan_segments(
     media_duration: Optional[float] = None,
     limits: Limits = Limits(),
 ) -> List[Plan]:
-    """One plan per segment, in the order given."""
     ordered = sorted(range(len(segments)), key=lambda index: float(segments[index]["start"]))
-    #: One plan per segment, in the caller's order - callers zip the two lists,
-    #: so a shorter result would silently shift every plan onto the wrong line.
     plans: List[Plan] = [Plan(1.0, "unmeasured", 0.0, 0.0)] * len(segments)
     for position, index in enumerate(ordered):
         segment = segments[index]
@@ -105,7 +81,6 @@ def plan_segments(
 
 
 def record(segment: Dict, chosen: Plan, final_duration: Optional[float]) -> Dict:
-    """Write the alignment metadata onto a segment."""
     source_duration = round(float(segment["end"]) - float(segment["start"]), 3)
     segment["source_duration"] = source_duration
     segment["alignment_window"] = chosen.window
@@ -114,7 +89,6 @@ def record(segment: Dict, chosen: Plan, final_duration: Optional[float]) -> Dict
     segment["alignment_overflow"] = chosen.overflow
     if final_duration is not None:
         segment["tts_duration_final"] = round(float(final_duration), 3)
-        #: Kept for the callers that read the pre-alignment key.
         segment["tts_duration"] = round(float(final_duration), 3)
     return segment
 

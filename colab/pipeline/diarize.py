@@ -1,8 +1,4 @@
-"""Who spoke when.
-
-Optional. When it is off every segment keeps the single default speaker, which
-is what the pipeline did before this stage existed.
-"""
+"""Speaker diarization stage."""
 from __future__ import annotations
 
 import json

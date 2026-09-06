@@ -1,12 +1,4 @@
-"""What every speech recogniser has to provide.
-
-Two shapes exist. A model that emits its own timestamps (Whisper, Parakeet)
-implements `transcribe`. A model that only turns one clip into one string
-(SeamlessM4T, MMS, SenseVoice) implements `transcribe_window`, and the base
-class here does the windowing - from the diarization turns when they exist, and
-from a voice-activity pass otherwise. That is how a model without timestamps
-still produces the canonical segment schema instead of one wall of text.
-"""
+"""Interfaces shared by speech recognition providers."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -30,8 +22,6 @@ class Transcript(NamedTuple):
 
 
 class ASRProvider(ABC):
-    """One loaded recogniser."""
-
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
 
@@ -53,20 +43,16 @@ class ASRProvider(ABC):
         language: Optional[str],
         windows: Optional[Sequence[Window]] = None,
     ) -> Transcript:
-        """Return the detected/confirmed language and canonical segments."""
+        pass
 
 
 class WindowedASR(ASRProvider):
-    """Base for recognisers that transcribe one clip at a time."""
-
-    #: Windows longer than this are split; most of these models were trained on
-    #: utterance-length audio and degrade on long inputs.
     max_window_seconds = 30.0
     min_window_seconds = 0.25
 
     @abstractmethod
     def transcribe_window(self, clip: Path, language: str) -> str:
-        """Text for one already-cut mono 16 kHz clip."""
+        pass
 
     def transcribe(
         self,
@@ -101,7 +87,6 @@ def split_windows(
     maximum: float,
     minimum: float,
 ) -> List[Window]:
-    """Drop windows too short to hold speech and cut over-long ones."""
     result: List[Window] = []
     for window in sorted(windows, key=lambda item: item.start):
         span = window.end - window.start

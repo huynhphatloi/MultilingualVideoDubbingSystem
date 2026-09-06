@@ -1,10 +1,4 @@
-"""SeamlessM4T in speech-to-text mode.
-
-The checkpoint is the same one the translation provider uses, so a session that
-already loaded it for translation pays nothing extra beyond the slot swap. It
-returns one string per clip with no timing, so `WindowedASR` supplies the
-windows.
-"""
+"""SeamlessM4T speech recognition."""
 from __future__ import annotations
 
 import os
@@ -17,12 +11,10 @@ from dubflow_core import languages as L
 from providers.asr.base import WindowedASR
 from providers.base import ModelSpec
 
-#: The medium checkpoint fits a free Colab GPU; override to use large-v2.
 MODEL_ENV = "SEAMLESS_MODEL"
 
 
 class SeamlessASRProvider(WindowedASR):
-    #: SeamlessM4T was trained on utterances; long inputs degrade sharply.
     max_window_seconds = 20.0
 
     def __init__(self, spec: ModelSpec) -> None:

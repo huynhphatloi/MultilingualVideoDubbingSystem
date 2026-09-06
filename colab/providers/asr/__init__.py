@@ -15,7 +15,6 @@ __all__ = [
 
 
 def load(spec: ModelSpec, language: Optional[str] = None) -> ASRProvider:
-    """The loaded recogniser, reusing the resident one when the key matches."""
     module = REGISTRY.implementation(spec)
     key = module.cache_key(spec, language)
     return slot("asr").get(key, lambda: module.build(spec, language))

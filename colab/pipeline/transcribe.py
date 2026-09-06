@@ -1,10 +1,4 @@
-"""Speech to text.
-
-A recogniser with its own timestamps transcribes the whole track. One without
-them is given windows instead: the diarization turns when that stage ran, and
-voice-activity windows otherwise. Either way the stage produces the same
-canonical segments.
-"""
+"""Transcribe speech into canonical segments."""
 from __future__ import annotations
 
 import json
@@ -23,15 +17,10 @@ def run(job: dict, folder: Path) -> None:
     audio = folder / job["files"]["asr_audio"]
     provider = providers.asr.load(config.asr, config.source_language)
 
-    # `None` means "detect it". A recogniser with its own detection reports the
-    # language as part of transcribing, and a windowed one calls its own
-    # detect_language before cutting - neither needs a separate pass here.
     language = config.source_language
 
     windows = None
     if not config.asr.supports_timestamps and job.get("turns"):
-        # The turns already say where speech is and who owns it, so a windowed
-        # recogniser gets its segmentation for free and keeps the speaker label.
         windows = windows_from_turns(job["turns"])
 
     transcript = provider.transcribe(audio, language, windows)

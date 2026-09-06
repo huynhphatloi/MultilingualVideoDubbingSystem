@@ -14,8 +14,6 @@ RUN python -m pip install --upgrade pip \
  && python -m pip install -r requirements.txt
 
 COPY ai-service/app.py ./app.py
-# The language table, segment schema and alignment maths are shared with the
-# Colab service; both import the same package rather than keeping a copy.
 COPY dubflow_core ./dubflow_core
 COPY frontend ./frontend
 RUN mkdir -p /data/jobs \

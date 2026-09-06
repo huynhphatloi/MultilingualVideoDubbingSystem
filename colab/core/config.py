@@ -1,13 +1,4 @@
-"""Turning request parameters into a validated job configuration.
-
-Both the end-to-end `POST /jobs` route and the per-stage routes build one of
-these, so the compatibility rules - can this engine speak that language, can it
-clone a voice, is its package installed - are written once and enforced before
-any model is downloaded rather than three stages later.
-
-The old flat parameters (`model`, `translation_engine`, `tts_engine`) still work
-and map onto the new ones.
-"""
+"""Request parsing and job configuration validation."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -24,13 +15,7 @@ FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 def as_bool(value: Any, default: bool) -> bool:
-    """Parse a flag, treating an empty field as absent rather than false.
-
-    Multipart forms cannot omit a field: n8n sends every parameter it declares,
-    empty when the operator left it alone. Reading "" as false turned the
-    form's "Voice Cloning: Automatic" into "Voice Cloning: off", which then
-    refused every engine that only speaks in a cloned voice.
-    """
+    """Parse a flag, treating an empty field as absent."""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -65,14 +50,12 @@ def as_language(value: Any, field_name: str, allow_auto: bool = False) -> Option
 @dataclass
 class Features:
     diarization: bool = False
-    voice_cloning: bool = False
     alignment: bool = True
     source_separation: bool = False
 
     def public(self) -> Dict[str, bool]:
         return {
             "diarization": self.diarization,
-            "voice_cloning": self.voice_cloning,
             "alignment": self.alignment,
             "source_separation": self.source_separation,
         }
@@ -109,7 +92,7 @@ class JobConfig:
             "target_language": self.target_language,
             "asr": choice(self.asr),
             "translation": choice(self.translation),
-            "tts": dict(choice(self.tts) or {}, voice_cloning=self.features.voice_cloning),
+            "tts": choice(self.tts),
             "features": self.features.public(),
         }
         if self.diarization is not None:
@@ -125,7 +108,6 @@ class JobConfig:
         return payload
 
     def confirm_source_language(self, detected: str) -> None:
-        """Check the detected language against the models that will use it."""
         providers.registry("asr").require_language(self.asr, detected, "source")
         if detected != self.target_language:
             providers.registry("translation").require_language(
@@ -158,11 +140,7 @@ def _speakers(values: Mapping[str, Any], name: str) -> Optional[int]:
 
 
 def rebuild(job: Mapping[str, Any]) -> JobConfig:
-    """The configuration of a stored job, with the detected language filled in.
-
-    Stages rebuild rather than deserialise so that a job resumed after an edit
-    is validated against the registry it will actually run on.
-    """
+    """Rebuild a stored job configuration with its detected language."""
     config = build(job.get("request") or {})
     detected = job.get("source_language")
     if detected:
@@ -171,11 +149,7 @@ def rebuild(job: Mapping[str, Any]) -> JobConfig:
 
 
 def build(values: Mapping[str, Any]) -> JobConfig:
-    """Validate a request and resolve every model it selects.
-
-    `values` is the flat form/JSON body. Both the new names
-    (`asr_provider`/`asr_model`) and the old ones (`model`) are accepted.
-    """
+    """Validate request values and resolve each selected model."""
     target = as_language(values.get("target_language", "vi"), "target_language")
     source = as_language(values.get("source_language"), "source_language", allow_auto=True)
 
@@ -196,10 +170,7 @@ def build(values: Mapping[str, Any]) -> JobConfig:
         _first(values, "tts_model", "tts_engine") or providers.DEFAULTS["tts"],
     )
 
-    # Language compatibility comes first: "this engine does not speak that
-    # language" is a more useful answer than "install its package" when the
-    # combination was never going to work.
-    # ----------------------------------------------------------------------
+    # Report language mismatches before missing optional packages.
     if source is None and not asr_spec.supports_language_detection:
         raise InvalidRequest(
             f"'{asr_spec.display_name}' cannot detect the spoken language, so "
@@ -221,29 +192,11 @@ def build(values: Mapping[str, Any]) -> JobConfig:
     for task, spec in (("asr", asr_spec), ("translation", translation_spec), ("tts", tts_spec)):
         providers.registry(task).require_available(spec)
 
-    # Features --------------------------------------------------------------
     features = Features(
         diarization=as_bool(values.get("enable_diarization"), False),
-        # A cloning engine that cannot speak without a reference keeps its old
-        # behaviour: the pipeline cuts one for it unless asked not to.
-        voice_cloning=as_bool(
-            values.get("enable_voice_cloning"), tts_spec.reference_required
-        ),
         alignment=as_bool(values.get("enable_alignment"), True),
         source_separation=as_bool(values.get("enable_source_separation"), False),
     )
-
-    if features.voice_cloning and not tts_spec.supports_voice_cloning:
-        raise InvalidRequest(
-            f"'{tts_spec.display_name}' does not clone voices, so voice cloning "
-            f"cannot be enabled for it. Turn it off, or pick an engine whose "
-            f"supports_voice_cloning is true."
-        )
-    if tts_spec.reference_required and not features.voice_cloning:
-        raise InvalidRequest(
-            f"'{tts_spec.display_name}' only speaks in a cloned voice, so voice "
-            f"cloning cannot be turned off for it."
-        )
 
     diarization_spec = None
     if features.diarization:

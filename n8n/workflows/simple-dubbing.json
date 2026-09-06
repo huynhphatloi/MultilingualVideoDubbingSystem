@@ -258,16 +258,10 @@
               "fieldOptions": {
                 "values": [
                   {
-                    "option": "mms - MMS-TTS, the default: 34 languages, stock voice"
+                    "option": "mms - MMS-TTS, the default: 34 languages"
                   },
                   {
                     "option": "edge - Microsoft Edge voices, most natural, needs internet"
-                  },
-                  {
-                    "option": "f5_vi - F5-TTS cloning, Vietnamese only"
-                  },
-                  {
-                    "option": "f5_base - F5-TTS cloning, English and Chinese"
                   }
                 ]
               },
@@ -494,28 +488,6 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://ai-service:8000/stages/voice_references",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
-        "options": {
-          "timeout": 7200000
-        }
-      },
-      "id": "stage-voice_references",
-      "name": "7. Voice References",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        700,
-        300
-      ],
-      "notes": "Optional. Cuts one clean clip per speaker and uploads it, so cloning keeps each voice distinct.",
-      "notesInFlow": true
-    },
-    {
-      "parameters": {
-        "method": "POST",
         "url": "http://ai-service:8000/stages/synthesize",
         "sendBody": true,
         "specifyBody": "json",
@@ -525,7 +497,7 @@
         }
       },
       "id": "stage-synthesize",
-      "name": "8. Generate Voice",
+      "name": "7. Generate Voice",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -547,7 +519,7 @@
         }
       },
       "id": "stage-align",
-      "name": "9. Align Speech",
+      "name": "8. Align Speech",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -569,7 +541,7 @@
         }
       },
       "id": "stage-separate",
-      "name": "10. Source Separation",
+      "name": "9. Source Separation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -591,7 +563,7 @@
         }
       },
       "id": "stage-mix",
-      "name": "11. Mix Audio",
+      "name": "10. Mix Audio",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -613,7 +585,7 @@
         }
       },
       "id": "stage-render",
-      "name": "12. Render Video",
+      "name": "11. Render Video",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -685,13 +657,13 @@
             {
               "id": "c44192f2-a601-4a2c-8572-e27800000010",
               "name": "voice_engine",
-              "value": "={{ $('8. Generate Voice').first().json.requested_engine }}",
+              "value": "={{ $('7. Generate Voice').first().json.requested_engine }}",
               "type": "string"
             },
             {
               "id": "c44192f2-a601-4a2c-8572-e27800000011",
               "name": "voice_used",
-              "value": "={{ Object.keys($('8. Generate Voice').first().json.models_used || {}).join(', ') }}",
+              "value": "={{ Object.keys($('7. Generate Voice').first().json.models_used || {}).join(', ') }}",
               "type": "string"
             },
             {
@@ -703,13 +675,13 @@
             {
               "id": "c44192f2-a601-4a2c-8572-e27800000013",
               "name": "alignment",
-              "value": "={{ JSON.stringify($('9. Align Speech').first().json.alignment || {}) }}",
+              "value": "={{ JSON.stringify($('8. Align Speech').first().json.alignment || {}) }}",
               "type": "string"
             },
             {
               "id": "c44192f2-a601-4a2c-8572-e27800000014",
               "name": "mix_mode",
-              "value": "={{ $('11. Mix Audio').first().json.mode }}",
+              "value": "={{ $('10. Mix Audio').first().json.mode }}",
               "type": "string"
             }
           ]
@@ -888,69 +860,58 @@
       "main": [
         [
           {
-            "node": "7. Voice References",
+            "node": "7. Generate Voice",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "7. Voice References": {
+    "7. Generate Voice": {
       "main": [
         [
           {
-            "node": "8. Generate Voice",
+            "node": "8. Align Speech",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "8. Generate Voice": {
+    "8. Align Speech": {
       "main": [
         [
           {
-            "node": "9. Align Speech",
+            "node": "9. Source Separation",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "9. Align Speech": {
+    "9. Source Separation": {
       "main": [
         [
           {
-            "node": "10. Source Separation",
+            "node": "10. Mix Audio",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "10. Source Separation": {
+    "10. Mix Audio": {
       "main": [
         [
           {
-            "node": "11. Mix Audio",
+            "node": "11. Render Video",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "11. Mix Audio": {
-      "main": [
-        [
-          {
-            "node": "12. Render Video",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "12. Render Video": {
+    "11. Render Video": {
       "main": [
         [
           {

@@ -1,8 +1,4 @@
-"""faster-whisper: the baseline recogniser, unchanged in behaviour.
-
-Its `id` is the checkpoint name faster-whisper resolves ("large-v3-turbo"), and
-`repo_id` records which Hugging Face repository that resolves to.
-"""
+"""faster-whisper speech recognition."""
 from __future__ import annotations
 
 from pathlib import Path

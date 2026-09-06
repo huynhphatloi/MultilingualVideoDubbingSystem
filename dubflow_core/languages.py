@@ -1,19 +1,14 @@
-"""The one language table.
-
-ISO-639-1 is the public application code. Models want other alphabets: MMS and
-SeamlessM4T use ISO-639-3, NLLB uses FLORES-200 codes. Providers translate from
-here rather than each keeping their own map.
-"""
+"""Shared language and provider-code mappings."""
 from __future__ import annotations
 
 from typing import Dict, List, NamedTuple, Optional
 
 
 class Language(NamedTuple):
-    code: str      #: ISO-639-1, the code every API in this project speaks
-    name: str      #: English display name
-    iso3: str      #: ISO-639-3, used by MMS and SeamlessM4T
-    flores: str    #: FLORES-200 code, used by NLLB
+    code: str
+    name: str
+    iso3: str
+    flores: str
 
 
 _ROWS = (
@@ -71,7 +66,6 @@ _ROWS = (
 
 LANGUAGES: Dict[str, Language] = {row[0]: Language(*row) for row in _ROWS}
 CODES = tuple(LANGUAGES)
-#: Every code, for providers whose coverage is the whole table.
 ALL = CODES
 
 
@@ -100,11 +94,6 @@ def flores(code: str) -> str:
 
 
 def subset(*codes: str) -> tuple:
-    """Build a provider's language tuple, rejecting codes outside the table.
-
-    A typo in a provider's language list would otherwise become a silent claim
-    of support for a language the pipeline cannot even name.
-    """
     unknown = [code for code in codes if code not in LANGUAGES]
     if unknown:
         raise ValueError(f"Not application language codes: {sorted(unknown)}")
@@ -112,7 +101,6 @@ def subset(*codes: str) -> tuple:
 
 
 def exclude(*codes: str) -> tuple:
-    """Every application language except the ones named."""
     unknown = [code for code in codes if code not in LANGUAGES]
     if unknown:
         raise ValueError(f"Not application language codes: {sorted(unknown)}")

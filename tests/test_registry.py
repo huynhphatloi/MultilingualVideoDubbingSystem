@@ -1,4 +1,3 @@
-"""Registry invariants, availability reporting and language filtering."""
 from __future__ import annotations
 
 import pytest
@@ -23,7 +22,6 @@ def test_no_model_claims_a_language_the_application_cannot_name(registry):
 
 
 def test_the_old_engine_names_are_still_registered(registry):
-    """The pre-refactor API accepted these; they have to keep resolving."""
     for checkpoint in (
         "tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium",
         "medium.en", "large-v2", "large-v3", "large-v3-turbo",
@@ -32,7 +30,7 @@ def test_the_old_engine_names_are_still_registered(registry):
         assert registry.registry("asr").has(checkpoint)
     for engine in ("nllb", "seamless"):
         assert registry.registry("translation").has(engine)
-    for voice in ("mms", "edge", "f5_vi", "f5_base"):
+    for voice in ("mms", "edge"):
         assert registry.registry("tts").has(voice)
 
 
@@ -46,9 +44,6 @@ def test_english_only_checkpoints_are_marked_as_such(registry):
 
 
 def test_only_models_that_report_the_language_claim_detection(registry):
-    """A model that transcribes without being told the language is not a
-    detector unless it also says which language it heard - the translation
-    stage needs that answer."""
     asr = registry.registry("asr")
     assert asr.get("large-v3").supports_language_detection
     for silent in ("mms_asr", "seamless_asr"):
@@ -63,42 +58,28 @@ def test_models_without_timestamps_are_flagged(registry):
 
 
 def test_documented_language_gaps(registry):
-    """Coverage that was verified against each model's own card."""
     tts = registry.registry("tts")
-    assert "vi" not in tts.get("f5_base").languages
-    assert set(tts.get("f5_base").languages) == {"en", "zh"}
-    assert tts.get("f5_vi").languages == ("vi",)
     assert "vi" in tts.get("mms").languages and "vi" in tts.get("edge").languages
-    # MMS-TTS publishes no checkpoint for these, so the pipeline must not offer
-    # them; before the registry existed the job failed with a 404 from the Hub.
+    assert "hy" not in tts.get("edge").languages, "Edge publishes no Armenian voice"
     for missing in ("ja", "zh", "it", "cs", "da", "no"):
         assert missing not in tts.get("mms").languages
-    # SeamlessM4T's speech input covers everything but Malay and Sinhala.
     assert set(registry.registry("asr").get("seamless_asr").languages) == set(
         L.exclude("ms", "si")
     )
 
 
-def test_cloning_engines_declare_their_reference_need(registry):
-    tts = registry.registry("tts")
-    for cloner in ("f5_vi", "f5_base"):
-        spec = tts.get(cloner)
-        assert spec.supports_voice_cloning and spec.reference_required, cloner
-    for stock in ("mms", "edge"):
-        assert not tts.get(stock).supports_voice_cloning, stock
-
 
 def test_licences_are_recorded_for_the_restricted_models(registry):
     assert registry.registry("asr").get("mms_asr").license == "cc-by-nc-4.0"
     assert registry.registry("translation").get("nllb").license == "cc-by-nc-4.0"
-    assert registry.registry("tts").get("f5_vi").license == "cc-by-nc-4.0"
+    assert registry.registry("tts").get("mms").license == "cc-by-nc-4.0"
     assert registry.registry("asr").get("large-v3").license == "mit"
 
 
 def test_unavailable_models_report_why_instead_of_disappearing(registry):
-    spec = registry.registry("tts").get("f5_vi")
+    spec = registry.registry("tts").get("edge")
     if not spec.available():
-        assert "f5-tts" in (spec.unavailable_reason() or "")
+        assert "edge-tts" in (spec.unavailable_reason() or "")
         assert spec.public()["available"] is False
         assert spec.public()["installed"] is False
     with pytest.raises(MissingDependency):
@@ -128,8 +109,7 @@ def test_resolve_accepts_a_provider_a_model_or_both(registry):
 def test_language_rejection_names_a_working_alternative(registry):
     tts = registry.registry("tts")
     with pytest.raises(UnsupportedLanguage) as failure:
-        tts.require_language(tts.get("f5_base"), "vi", "target")
+        tts.require_language(tts.get("mms"), "ja", "target")
     message = str(failure.value)
-    assert "does not support target language 'vi'" in message
-    assert "en, zh" in message
-
+    assert "does not support target language 'ja'" in message
+    assert "en, vi" in message

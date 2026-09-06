@@ -1,10 +1,4 @@
-"""Device selection, optional-package probing and the model slots.
-
-Colab's free GPU cannot hold two large checkpoints, so each task owns a slot
-that holds exactly one loaded model. Asking a slot for a different key evicts
-what it holds first. The registry is metadata; the slots are the only place a
-loaded model lives.
-"""
+"""Device selection, dependency probing, and model slots."""
 from __future__ import annotations
 
 import gc
@@ -19,8 +13,6 @@ _device: Optional[str] = None
 
 
 def device() -> str:
-    """"cuda" when torch sees a GPU. torch is imported lazily so that the HTTP
-    layer, the registry and the tests all work without it."""
     global _device
     if _device is None:
         forced = os.getenv("DUBFLOW_DEVICE", "").strip().lower()
@@ -48,7 +40,6 @@ def free_memory() -> None:
 
 
 def installed(import_name: Optional[str]) -> bool:
-    """Is this optional dependency importable in this session?"""
     if not import_name:
         return True
     try:
@@ -63,11 +54,7 @@ def require(import_name: str, pip_name: str, purpose: str) -> None:
 
 
 class Slot:
-    """One loaded model per slot, evicted when the key changes.
-
-    The key identifies everything that changes the loaded object - the model id
-    plus whatever else the builder used, such as an MMS language adapter.
-    """
+    """One loaded model per task, evicted when its key changes."""
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -97,10 +84,6 @@ class Slot:
         free_memory()
 
 
-#: One slot per task. Two tasks may hold a model at once (ASR and translation
-#: never run at the same moment, but the queue keeps whichever ran last), which
-#: is the deliberate trade: re-loading Whisper between every stage would cost
-#: more than the memory it frees.
 SLOTS: Dict[str, Slot] = {
     task: Slot(task)
     for task in ("asr", "translation", "tts", "diarization", "separation")

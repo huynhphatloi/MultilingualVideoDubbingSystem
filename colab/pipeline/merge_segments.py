@@ -1,9 +1,4 @@
-"""Give every recognised segment a speaker.
-
-With diarization the speaker is whoever holds most of the segment; without it
-everything belongs to the single default speaker. Either way the segment schema
-is identical from here on.
-"""
+"""Assign a speaker to each recognised segment."""
 from __future__ import annotations
 
 import json

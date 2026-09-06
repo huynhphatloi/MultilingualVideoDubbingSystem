@@ -1,14 +1,4 @@
-"""Speech recognisers this build knows about.
-
-Language lists are copied from each model's own card or source, never inferred:
-
-* Whisper - the 99 languages of the multilingual checkpoints cover every code in
-  the application table; the `.en` and `distil-` checkpoints are English-only.
-* SeamlessM4T - the source-speech column of the M4T language table. Malay is
-  text-only there and Sinhala is absent, so both are excluded.
-* MMS - the adapter files published in facebook/mms-1b-all. Eight application
-  languages have no adapter, and five need a script-qualified adapter name.
-"""
+"""Speech recognition model registry."""
 from __future__ import annotations
 
 from dubflow_core import languages as L
@@ -39,7 +29,6 @@ MMS = REGISTRY.add_provider(ProviderSpec(
     notes="1162 language adapters. CC-BY-NC-4.0: research use only.",
 ))
 
-#: checkpoint name -> (Hugging Face repo, English-only, label)
 _WHISPER_CHECKPOINTS = (
     ("tiny", "Systran/faster-whisper-tiny", False, "Tiny"),
     ("tiny.en", "Systran/faster-whisper-tiny.en", True, "Tiny (English)"),
@@ -84,8 +73,6 @@ REGISTRY.add(ModelSpec(
     provider="seamless",
     display_name="SeamlessM4T (speech to text)",
     repo_id="facebook/hf-seamless-m4t-medium",
-    #: Source-speech column of the M4T table, intersected with this project's
-    #: languages: Malay is target-text only and Sinhala is not listed.
     languages=L.exclude("ms", "si"),
     multilingual=True,
     license="cc-by-nc-4.0",
@@ -102,9 +89,6 @@ REGISTRY.add(ModelSpec(
     provider="mms",
     display_name="MMS-1B-all",
     repo_id="facebook/mms-1b-all",
-    #: Every application language whose adapter exists in the checkpoint.
-    #: Only Sinhala has none. Seven others need a script-qualified or
-    #: differently-coded adapter name, which providers.asr.mms maps.
     languages=L.exclude("si"),
     multilingual=True,
     license="cc-by-nc-4.0",
@@ -115,5 +99,4 @@ REGISTRY.add(ModelSpec(
     module="providers.asr.mms",
 ))
 
-#: The checkpoint used when a request omits the model. Kept as the old default.
 DEFAULT_MODEL = "small"

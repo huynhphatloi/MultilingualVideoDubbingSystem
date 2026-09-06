@@ -17,8 +17,6 @@ services:
       N8N_WEBHOOK_URL: http://n8n:5678/webhook/dubbing/start
     volumes:
       - job-data:/data/jobs
-      # Edit without rebuilding: frontend/index.html is re-read on every
-      # request, app.py needs `make restart`.
       - ./frontend:/app/frontend:ro
       - ./ai-service/app.py:/app/app.py:ro
       - ./dubflow_core:/app/dubflow_core:ro

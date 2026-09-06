@@ -1,10 +1,4 @@
-"""What every speech engine has to provide.
-
-The pipeline hands over a `SpeechRequest` and a path to write; the provider
-writes mono PCM WAV there. Whether the engine varies its own speaking rate or
-needs ffmpeg afterwards is recorded in the model spec, so the caller never has
-to know which engine it is talking to.
-"""
+"""Interfaces shared by speech generation providers."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -21,9 +15,7 @@ class SpeechRequest:
     text: str
     language: str
     speed: float = 1.0
-    #: The speaker to clone. One per speaker when diarization ran.
     reference: Optional[Path] = None
-    #: What that reference clip says, for the engines that ask for it.
     reference_text: Optional[str] = None
     speaker_id: Optional[str] = None
 
@@ -59,4 +51,4 @@ class TTSProvider(ABC):
 
     @abstractmethod
     def synthesize(self, request: SpeechRequest, out: Path) -> None:
-        """Write one WAV file for one line of text."""
+        pass

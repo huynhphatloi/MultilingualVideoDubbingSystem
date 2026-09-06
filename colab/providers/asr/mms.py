@@ -1,13 +1,4 @@
-"""Meta MMS speech recognition.
-
-MMS is one CTC encoder plus a per-language adapter, so the language has to be
-named - it cannot be detected. The adapter names are the ones actually published
-in facebook/mms-1b-all: most are plain ISO-639-3, seven are not, and Sinhala has
-no adapter at all.
-
-Licence note: CC-BY-NC-4.0. The registry records that, and the capabilities
-endpoint reports it, so a commercial deployment can filter this out.
-"""
+"""Meta MMS speech recognition."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,9 +10,6 @@ from dubflow_core import languages as L
 from providers.asr.base import WindowedASR
 from providers.base import ModelSpec
 
-#: Application code -> adapter name in facebook/mms-1b-all, where the adapter is
-#: not simply the ISO-639-3 code from the language table. Verified against the
-#: adapter files published in the checkpoint.
 ADAPTER_OVERRIDES: Dict[str, str] = {
     "zh": "cmn-script_simplified",
     "ar": "ara",
@@ -31,7 +19,6 @@ ADAPTER_OVERRIDES: Dict[str, str] = {
     "ms": "zlm",
     "mn": "mon",
 }
-#: No adapter exists for these application languages.
 UNSUPPORTED = ("si",)
 
 
@@ -57,9 +44,7 @@ class MMSASRProvider(WindowedASR):
         self.model = Wav2Vec2ForCTC.from_pretrained(
             repo, target_lang=self.adapter, ignore_mismatched_sizes=True
         )
-        # Loading the adapter twice is harmless and covers both transformers
-        # paths: the one that applies target_lang at from_pretrained and the one
-        # that expects an explicit load_adapter call.
+        # Transformers versions differ on whether from_pretrained loads the adapter.
         self.model.load_adapter(self.adapter)
         self.model = self.model.to(device()).eval()
 
@@ -85,7 +70,6 @@ class MMSASRProvider(WindowedASR):
 
 
 def cache_key(spec: ModelSpec, language: Optional[str] = None) -> str:
-    #: The adapter is part of what is loaded, so it is part of the slot key.
     return f"asr:{spec.id}:{language or 'none'}"
 
 

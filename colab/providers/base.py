@@ -1,14 +1,4 @@
-"""Model metadata and the registry that holds it.
-
-A `ModelSpec` is data only: it never imports the library it describes, so the
-capabilities endpoint, the request validator and the tests all work in a session
-where none of the optional engines are installed. The implementation module is
-imported the first time a model is actually asked to run.
-
-Every field here is meant to be checkable against the model's own card. Nothing
-in this file is a guess: a language belongs in `languages` only if the official
-model card or the model's own source lists it.
-"""
+"""Model metadata and provider registries."""
 from __future__ import annotations
 
 import importlib
@@ -23,51 +13,31 @@ TASKS = ("asr", "translation", "tts", "diarization", "separation")
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """Everything the frontend, the validator and the loader need to know."""
-
     id: str
     task: str
     provider: str
     display_name: str
-    #: Hugging Face repository, or the upstream project when weights are not on
-    #: the Hub. None for services that host the model themselves, such as Edge.
     repo_id: Optional[str] = None
-    #: Application language codes (ISO-639-1) this model officially covers.
-    #: Empty means the model is language-agnostic, not that it speaks nothing.
     languages: Tuple[str, ...] = ()
     multilingual: bool = False
     license: str = "unknown"
-    #: pip name and import name of the optional dependency, None when the base
-    #: install already covers it.
     optional_package: Optional[str] = None
     import_name: Optional[str] = None
-    #: A second dependency that has to be installed by hand, such as MeloTTS.
     extra_requirements: Tuple[str, ...] = ()
-    #: An environment variable that must hold a token, for gated weights.
     required_env: Optional[str] = None
     experimental: bool = False
     notes: str = ""
 
-    # ASR ----------------------------------------------------------------
     supports_language_detection: bool = False
     supports_timestamps: bool = False
 
-    # TTS ----------------------------------------------------------------
-    supports_voice_cloning: bool = False
     supports_multispeaker: bool = False
-    reference_required: bool = False
-    #: Some engines want the transcript of the reference clip as well.
-    reference_text_required: bool = False
     streaming: bool = False
     recommended_sample_rate: Optional[int] = None
-    #: "native" when the engine varies its own speaking rate, "postprocess"
-    #: when ffmpeg has to do it afterwards.
     speed_control: str = "postprocess"
 
-    # Runtime -------------------------------------------------------------
     supports_gpu: bool = True
     supports_cpu: bool = True
-    #: Import path of the module implementing this model.
     module: str = ""
 
     def installed(self) -> bool:
@@ -104,7 +74,6 @@ class ModelSpec:
         return language in self.languages
 
     def public(self) -> Dict:
-        """The capabilities payload for one model."""
         payload: Dict = {
             "id": self.id,
             "task": self.task,
@@ -131,10 +100,7 @@ class ModelSpec:
             })
         if self.task == "tts":
             payload.update({
-                "supports_voice_cloning": self.supports_voice_cloning,
                 "supports_multispeaker": self.supports_multispeaker,
-                "reference_required": self.reference_required,
-                "reference_text_required": self.reference_text_required,
                 "streaming": self.streaming,
                 "recommended_sample_rate": self.recommended_sample_rate,
                 "speed_control": self.speed_control,
@@ -144,8 +110,6 @@ class ModelSpec:
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    """A family of models sharing one implementation."""
-
     id: str
     task: str
     display_name: str
@@ -154,15 +118,12 @@ class ProviderSpec:
 
 
 class Registry:
-    """The models one task offers, plus the lazy import of their code."""
-
     def __init__(self, task: str) -> None:
         self.task = task
         self._providers: Dict[str, ProviderSpec] = {}
         self._models: Dict[str, ModelSpec] = {}
         self._order: List[str] = []
 
-    # Registration --------------------------------------------------------
     def add_provider(self, spec: ProviderSpec) -> ProviderSpec:
         if spec.task != self.task:
             raise ValueError(f"{spec.id} is a {spec.task} provider, not {self.task}")
@@ -184,7 +145,6 @@ class Registry:
         for spec in specs:
             self.add(spec)
 
-    # Lookup --------------------------------------------------------------
     def ids(self) -> List[str]:
         return list(self._order)
 
@@ -214,12 +174,7 @@ class Registry:
         provider_id: Optional[str] = None,
         model_id: Optional[str] = None,
     ) -> ModelSpec:
-        """Pick a model from a provider and/or a model id.
-
-        A model id alone is enough; a provider alone selects that provider's
-        first model. Naming both and having them disagree is an error rather
-        than a silent preference for one of them.
-        """
+        """Resolve a provider/model pair without allowing conflicts."""
         provider = (provider_id or "").strip().lower() or None
         model = (model_id or "").strip() or None
         if provider and provider not in self._providers:
@@ -242,7 +197,6 @@ class Registry:
             return candidates[0]
         raise InvalidRequest(f"No {self.task} model was requested")
 
-    # Validation ----------------------------------------------------------
     def require_available(self, spec: ModelSpec) -> ModelSpec:
         if spec.available():
             return spec
@@ -272,9 +226,7 @@ class Registry:
             + alternatives
         )
 
-    # Loading -------------------------------------------------------------
     def implementation(self, spec: ModelSpec):  # noqa: ANN201
-        """Import the module that runs this model, only when it is needed."""
         if not spec.module:
             raise InvalidRequest(
                 f"'{spec.id}' is registered but has no implementation in this build."
@@ -282,9 +234,7 @@ class Registry:
         self.require_available(spec)
         return importlib.import_module(spec.module)
 
-    # Reporting -----------------------------------------------------------
     def public(self) -> List[Dict]:
-        """Providers with their models, the shape the frontend reads."""
         grouped: List[Dict] = []
         for provider in self.providers():
             models = [spec.public() for spec in self.for_provider(provider.id)]
@@ -301,7 +251,6 @@ class Registry:
 
 
 def check_language_lists(registries: Sequence[Registry], known: Sequence[str]) -> List[str]:
-    """Report any model claiming a language the application cannot name."""
     problems: List[str] = []
     for registry in registries:
         for spec in registry.models():

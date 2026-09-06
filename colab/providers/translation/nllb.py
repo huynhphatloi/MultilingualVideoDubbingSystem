@@ -10,7 +10,6 @@ from dubflow_core import languages as L
 from providers.base import ModelSpec
 from providers.translation.base import TranslationProvider
 
-#: Kept so an existing .env that pins a checkpoint still wins.
 MODEL_ENV = "TRANSLATION_MODEL"
 
 

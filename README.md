@@ -10,9 +10,9 @@ cached outside the container image.
 | | |
 |---|---|
 | **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · optional Google Colab |
-| **Models** | 16 ASR · 3 translation · 4 TTS · 1 diarization · 2 separation |
+| **Models** | 16 ASR · 3 translation · 2 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
-| **Tests** | 146, no GPU and no model download required |
+| **Tests** | 141, no GPU and no model download required |
 | **Status** | Reference implementation. Demo-grade security — see [Limitations](#limitations) |
 
 ---
@@ -157,7 +157,7 @@ make start
 | n8n workflow | <http://localhost:5678> |
 
 Upload a short clip — ten to twenty seconds is enough for a first run — and
-watch the eleven stages execute.
+watch the ten stages execute.
 
 ---
 
@@ -198,10 +198,10 @@ colab/                   AI service (runs on the Colab GPU)
     base.py              ModelSpec and Registry
     asr/                 faster_whisper, seamless, mms
     translation/         nllb, seamless
-    tts/                 mms, edge, f5
+    tts/                 mms, edge
     diarization/         pyannote
     separation/          demucs
-  pipeline/              The eleven stages and the runner
+  pipeline/              The ten stages and the runner
 ai-service/              Local FastAPI service: storage, FFmpeg, orchestration
 local-ai-service/        Docker image for running the Colab API locally
 frontend/index.html      Single-file web UI, reads /capabilities
@@ -215,7 +215,7 @@ tests/                   136 tests, no GPU required
 On the n8n route the FFmpeg stages run in `ai-service`. Model calls go to the
 selected AI backend over HTTP. With `make local` that traffic stays inside the
 Docker network; with a notebook backend it crosses the tunnel. The AI backend's
-own `POST /jobs` can also run all eleven stages itself.
+own `POST /jobs` can also run all ten stages itself.
 
 | # | Stage | Runs on | Optional | Produces |
 |---|---|---|---|---|
@@ -224,12 +224,11 @@ own `POST /jobs` can also run all eleven stages itself.
 | 3 | `transcribe` | AI service | | Canonical segments |
 | 4 | `merge_segments` | Local | | A speaker per segment, by time overlap |
 | 5 | `translate` | AI service | | Translations and the SRT (skipped when source = target) |
-| 6 | `voice_references` | Local + AI service | ● | One clean reference clip per speaker |
-| 7 | `synthesize` | AI service | | One WAV per segment |
-| 8 | `align` | Local FFmpeg | ● | Each line fitted to its time window |
-| 9 | `separate` | AI service | ● | Background stem without the original speech |
-| 10 | `mix` | Local FFmpeg | | Dub track placed at timestamps, blended |
-| 11 | `render` | Local FFmpeg | | MP4 with audio and embedded subtitles |
+| 6 | `synthesize` | AI service | | One WAV per segment |
+| 7 | `align` | Local FFmpeg | ● | Each line fitted to its time window |
+| 8 | `separate` | AI service | ● | Background stem without the original speech |
+| 9 | `mix` | Local FFmpeg | | Dub track placed at timestamps, blended |
+| 10 | `render` | Local FFmpeg | | MP4 with audio and embedded subtitles |
 
 ### Long stages do not hold a connection open
 
@@ -308,12 +307,13 @@ pass otherwise, and it produces the same canonical segments as Whisper.
 
 ### Speech generation
 
-| Model | Languages | Clones | Reference | Licence | Install |
-|---|---|---|---|---|---|
-| `mms` | 34 | — | — | CC-BY-NC-4.0 | base |
-| `edge` | 49 (no Armenian) | — | — | Microsoft service terms | `edge-tts` |
-| `f5_base` | en, zh | ✓ | required | CC-BY-NC-4.0 | `f5-tts` |
-| `f5_vi` | Vietnamese | ✓ | required | CC-BY-NC-4.0 | `f5-tts` |
+| Model | Languages | Licence | Install |
+|---|---|---|---|
+| `mms` | 34 | CC-BY-NC-4.0 | base |
+| `edge` | 49 (no Armenian) | Microsoft service terms | `edge-tts` |
+
+Both are stock voices: one voice per language, the same for every speaker. No
+voice in this build clones — see [Future work](#future-work).
 
 `mms` covers 34 of the 50 application languages: **Meta publishes no MMS-TTS
 checkpoint** for Japanese, Chinese, Italian, Czech, Danish, Norwegian, Urdu,
@@ -335,37 +335,26 @@ a working alternative, rather than failing on a 404 from the Hub.
 ### Optional model packages
 
 The base install covers Whisper, SeamlessM4T and MMS recognition, both
-translation engines and the `mms` voice. Four flags in the notebook's first cell
-add the rest of what this build registers, and all four are on, because the
-project's defaults — a Vietnamese dub with one voice per speaker — need them:
+translation engines and the `mms` voice. Three flags in the notebook's first
+cell add the rest of what this build registers:
 
 ```python
 INSTALL_EDGE = True          # edge           - stock voice, 49 languages, no GPU
-INSTALL_F5 = True            # f5_vi, f5_base - voice cloning
 INSTALL_DIARIZATION = True   # pyannote.audio - one voice per speaker
 INSTALL_DEMUCS = True        # demucs         - separate speech from background
 ```
-
-| Flag | Why it is on | Cost of turning it off |
-|---|---|---|
-| `INSTALL_EDGE` | The most natural stock voice, 49 languages | `mms` remains, at lower quality |
-| `INSTALL_F5` | `f5_vi` is the only voice here that clones Vietnamese | No voice cloning at all |
-| `INSTALL_DIARIZATION` | Without it every speaker shares one reference, so the per-speaker work has nothing to act on. **Needs `HF_TOKEN`** | One voice for the whole video |
-| `INSTALL_DEMUCS` | Lets the mix drop the original speech instead of ducking it | Voice-over mix only |
 
 Turning one off is not an error: its models then report `available: false` with
 the reason, `/capabilities` says so, the web UI disables them, and a job that
 asks for one is refused at creation rather than failing mid-pipeline.
 
-### Dependency notes
+`INSTALL_DIARIZATION` needs `HF_TOKEN`, and the account behind it has to have
+accepted the conditions on both `pyannote/speaker-diarization-3.1` and
+`pyannote/segmentation-3.0`.
 
-`f5-tts` pins its own `torch` and `torchaudio`, so the first `Run all` in a
-fresh session can end with Colab asking to restart the runtime. Restart and run
-all again; the second pass finds the packages already installed. The other three
-are safe alongside the base install.
-
-The base environment stays reproducible: `colab/requirements.txt` pins seven
-packages and never touches torch, which Colab ships matched to its own CUDA.
+The notebook's preflight cell performs the providers' own imports after the
+optional installs run, so a package that replaced a pinned one is reported
+before the server starts rather than several stages into a job.
 
 ### Environment variables — local stack
 
@@ -466,7 +455,6 @@ translation and speech never touches ASR or video:
 | `POST` | `/synthesize` | text [+ reference] → WAV |
 | `POST` | `/align` | segments → per-segment speed plan |
 | `POST` | `/separate` | audio → one stem |
-| `POST` | `/reference` | audio [+ transcript] → `reference_id` |
 
 ```bash
 # What can this session actually run?
@@ -475,8 +463,8 @@ curl "$COLAB_API_URL/capabilities" -H "Authorization: Bearer $COLAB_API_TOKEN"
 # Check a configuration without creating a job.
 curl -X POST "$COLAB_API_URL/validate" -H "Authorization: Bearer $COLAB_API_TOKEN" \
      -H 'Content-Type: application/json' \
-     -d '{"target_language":"vi","tts_model":"f5_base"}'
-# 400: 'F5-TTS v1 base' (f5_base) does not support target language 'vi'. ...
+     -d '{"target_language":"ja","tts_model":"mms"}'
+# 400: 'MMS-TTS' (mms) does not support target language 'ja'. ...
 
 # Dub a video end to end.
 curl -X POST "$COLAB_API_URL/jobs" -H "Authorization: Bearer $COLAB_API_TOKEN" \
@@ -484,8 +472,8 @@ curl -X POST "$COLAB_API_URL/jobs" -H "Authorization: Bearer $COLAB_API_TOKEN" \
      -F target_language=vi \
      -F asr_provider=faster_whisper -F asr_model=large-v3-turbo \
      -F translation_provider=nllb \
-     -F tts_provider=f5 -F tts_model=f5_vi \
-     -F enable_diarization=true -F enable_voice_cloning=true \
+     -F tts_provider=edge -F tts_model=edge \
+     -F enable_diarization=true \
      -F enable_alignment=true
 
 curl "$COLAB_API_URL/jobs/<job_id>"           # status, config, alignment summary
@@ -501,7 +489,7 @@ curl -OJ "$COLAB_API_URL/jobs/<job_id>/download"
 | `GET` | `/health`, `/backends`, `/languages` | Status and configuration |
 | `POST` | `/jobs/upload` | Store a video and settle its configuration |
 | `POST` | `/jobs/{id}/start` | Hand the job to n8n, or resume a failed job |
-| `POST` | `/stages/{stage}` | Run one stage; the eleven names are in the table above |
+| `POST` | `/stages/{stage}` | Run one stage; the ten names are in the table above |
 | `GET` | `/jobs/{id}` | The full job manifest |
 | `GET` | `/jobs/{id}/download`, `/subtitle` | Results |
 
@@ -576,7 +564,7 @@ Nothing was removed. The old parameters still work and map onto the new ones.
 | `translation_engine=nllb` | `translation_model=nllb` | Still accepted |
 | `tts_engine=mms` | `tts_model=mms` | Still accepted |
 | `GET /health` → `whisper_models`, `tts_engines` | `GET /capabilities` | The old keys are still published |
-| Six-stage progress | Eleven stages, optional ones skip | `progress` counts planned stages only |
+| Six-stage progress | Ten stages, optional ones skip | `progress` counts planned stages only |
 
 Three behaviours changed deliberately:
 
@@ -585,8 +573,8 @@ Three behaviours changed deliberately:
 - **Language support is enforced.** Combinations that used to fail deep inside a
   stage — `mms` with Japanese, `edge` with Norwegian or Tagalog — are refused at
   job creation.
-- **Voice references are per speaker** when diarization is on. With it off the
-  behaviour is unchanged: one reference for the whole video.
+- **Voice cloning was removed.** No engine in this build clones a voice, so
+  `enable_voice_cloning` is ignored and the `voice_references` stage is gone.
 
 ---
 
@@ -667,39 +655,67 @@ dependency changes require a rebuild.
   expose it to a network you do not control.
 - The n8n workflow has no retry or failure branch: a dropped tunnel stops the
   run. The web UI still reports the failing stage and its message.
-- Voice references uploaded through `POST /reference` share one store capped at
-  16 clips, so several concurrent multi-speaker jobs can evict each other's
-  samples. The notebook's own `POST /jobs` route keeps references inside the job
-  folder and is unaffected.
+- Speaker diarization changes the transcript and the subtitles, not the audio:
+  every speaker is voiced by the same stock voice. See [Future work](#future-work).
 
 ---
 
 ## Future work
 
-**Lip sync.** Re-timing the speaker's mouth to the dubbed audio was scoped out
-of this build and removed rather than left as an empty abstraction: a stage that
-never runs, a registry with no entries and a permanently disabled checkbox cost
-more to explain than they were worth.
+### Voice cloning, and one voice per speaker
 
-Adding it later is a contained change, because nothing else in the pipeline
-depends on the video between `mix` and `render`:
+Removed rather than left half-working. Every engine that could clone a voice
+depended on `f5-tts`, which pulls `transformers` 5.x and a numpy that the rest
+of the session cannot import — translation, SeamlessM4T and the MMS voice all
+fail with:
 
-1. A `lipsync` registry under `colab/providers/`, following the shape of
-   `separation/` — a `ProviderSpec`, one `ModelSpec` per checkpoint, and a
-   module implementing `synchronise(video, audio, output)`.
+```
+ImportError: cannot import name '_slice' from 'numpy._core.umath'
+```
+
+Keeping a feature whose only implementation cannot be installed meant a stage
+that never ran, a checkbox that was always disabled, and a per-speaker
+reference cutter with nothing to feed. Those are gone.
+
+What remains is the part that still works and still matters: **diarization
+decides who owns each line**, that label survives the merge into the canonical
+segments, and it reaches the TTS request as `SpeechRequest.speaker_id`. No
+engine here reads it yet, so the dub sounds the same either way — but the
+plumbing is in place, and it is the hook either of these would use:
+
+1. **Multiple stock voices.** `edge` publishes several voices per language and
+   already declares `supports_multispeaker`. Mapping `SPEAKER_00`, `SPEAKER_01`
+   … onto different Edge voices gives one voice per speaker with **no GPU and
+   no cloning** — the cheapest way back to a multi-voice dub, and it needs
+   nothing but a provider that reads `speaker_id`.
+2. **Cloning proper.** A `reference` field on `SpeechRequest`, a stage that cuts
+   one clean clip per speaker, and an engine that accepts it. The subtle part is
+   the cutter: a clip containing two voices clones a blend of them, so it has to
+   take only the regions a speaker holds alone. That was implemented once — see
+   `exclusive_regions` in the history of `dubflow_core/segments.py` — and is
+   worth recovering rather than re-deriving.
+
+The blocker for (2) is not the code but the environment: it needs a numpy that
+satisfies both `f5-tts` and this project's pinned base, which is a session-level
+experiment rather than a change here.
+
+### Lip sync
+
+Re-timing the speaker's mouth to the dubbed audio was scoped out for the same
+reason: a stage, a flag and an abstraction that never ran cost more to explain
+than they were worth.
+
+Adding it later is contained, because nothing between `mix` and `render`
+depends on the video:
+
+1. A `lipsync` registry under `colab/providers/`, shaped like `separation/`.
 2. A `pipeline/lipsync.py` stage with an `enabled(job)`, inserted between `mix`
    and `render`, plus its slot in `STAGE_SLOTS`.
-3. A `lip_sync` flag on `Features`, and `render` reading the lip-synced video in
-   place of the original.
+3. A `lip_sync` flag on `Features`, and `render` reading the lip-synced video.
 
-The n8n route needs one further decision that the notebook route does not: lip
-sync rewrites the video, so the whole file would have to cross the tunnel twice.
-Either the stage stays notebook-only, or the local service gains a way to run it
-without shipping the video.
-
-**Candidate models.** Wav2Lip (non-commercial), Retalker and LatentSync are the
-usual starting points; each keeps its own licence, which would be recorded in
-the registry alongside the rest.
+The n8n route needs one further decision the notebook route does not: lip sync
+rewrites the video, so the whole file would cross the tunnel twice. Wav2Lip
+(non-commercial), Retalker and LatentSync are the usual starting points.
 
 ---
 
@@ -719,7 +735,6 @@ reported by `/capabilities`. They are **not** interchangeable:
 
 **Every translation model in this build is CC-BY-NC-4.0**, so any end-to-end dub
 produced with it is non-commercial regardless of which voice was used.
-`f5_vi` is a community fine-tune and is marked `experimental` in the registry.
 
 Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper),
 [NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M),

@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when the frontend, the local API, the n8n form and the model registry
-disagree.
-
-The three model lists drifted apart once already: the form offered seven voices
-while the Colab server implemented one, and every extra choice was silently
-dropped because FastAPI ignores unknown form fields. Nothing failed loudly, so
-the result simply reported a model that had never run.
-
-The registry is now the single source of truth, so this script no longer
-compares three copies of the same list. It checks that nothing has grown a
-fourth copy: the frontend must read /capabilities, the local API must not keep
-its own model tables, and the n8n form - which cannot fetch anything, being a
-static form - may only offer ids that the registry actually defines.
-"""
+"""Validate contracts shared by the UI, APIs, workflow, and model registry."""
 from __future__ import annotations
 
 import ast
@@ -51,8 +38,6 @@ def failures() -> list:
 
 
 def check_workflow() -> list:
-    """The n8n form is static, so its options must exist in the registry, and
-    its stage nodes must call stages the local API actually serves."""
     problems = []
     workflow = json.loads(
         (ROOT / "n8n/workflows/simple-dubbing.json").read_text(encoding="utf-8")
@@ -72,10 +57,6 @@ def check_workflow() -> list:
         ]
         for field in form["parameters"]["formFields"]["values"]
     }
-    # The form need not offer a choice for every task - anything it leaves out
-    # falls through to the AI service's own default, which is the only place
-    # that knows what the running session installed. What it does offer has to
-    # be real, because a static form cannot check.
     for label, task in FORM_MODEL_FIELDS.items():
         if label not in fields:
             continue
@@ -86,7 +67,6 @@ def check_workflow() -> list:
                 f"n8n form field '{label}' offers ids the registry does not "
                 f"define: {sorted(unknown)}"
             )
-    # Same rule for the feature flags: absent is fine, present must be On/Off.
     for label in FORM_FLAG_FIELDS:
         values = {value.lower() for value in fields.get(label, [])}
         if not values <= {"on", "off", "automatic"}:
@@ -109,7 +89,6 @@ def check_workflow() -> list:
 
 
 def literals(path: Path, wanted: set) -> dict:
-    """Read module-level constants without importing the heavy dependencies."""
     found: dict = {}
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if not isinstance(node, ast.Assign):
@@ -125,7 +104,6 @@ def local_api_stages() -> list:
 
 
 def check_local_api() -> list:
-    """The local API must delegate model knowledge, not keep a copy."""
     problems = []
     source = (ROOT / "ai-service/app.py").read_text(encoding="utf-8")
     for banned in ("_WHISPER_MODELS", "_TRANSLATION_ENGINES", "_TTS_ENGINES",
@@ -149,7 +127,6 @@ def check_local_api() -> list:
 
 
 def check_frontend() -> list:
-    """The frontend must read the registry rather than hold its own lists."""
     problems = []
     source = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     if '"/capabilities"' not in source:
@@ -171,7 +148,6 @@ def check_frontend() -> list:
 
 
 def check_provider_maps() -> list:
-    """Each provider's language mapping has to cover what its spec advertises."""
     problems = []
     languages = providers.registry("asr").get("mms_asr").languages
     for code in languages:

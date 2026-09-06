@@ -1,11 +1,4 @@
-"""Cut one clean reference clip per speaker.
-
-The old pipeline cut a single twelve-second clip from the start of the video and
-cloned every line from it, which in a two-person interview means both speakers
-end up sounding like whoever talked first. With diarization this cuts one clip
-per speaker from regions nobody else overlaps; without it there is one speaker,
-so the behaviour is the same as before.
-"""
+"""Build voice-cloning reference clips."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,11 +10,8 @@ from dubflow_core.segments import DEFAULT_SPEAKER, exclusive_regions, text_betwe
 
 NAME = "voice_references"
 
-#: Cloning quality plateaus well before this; longer clips only cost time.
 TARGET_SECONDS = 12.0
-#: Below this the clone is unstable, so the stage says so instead of trying.
 MINIMUM_SECONDS = 1.0
-#: Never take more than this from one region, so the clip mixes a few phrases.
 MAX_PIECE_SECONDS = 8.0
 
 
@@ -35,8 +25,6 @@ def _regions_for(job: dict, speaker: str) -> List[Dict]:
         regions = exclusive_regions(turns, speaker, min_duration=MINIMUM_SECONDS)
         if regions:
             return regions
-    # No diarization, or a speaker whose every turn overlaps someone else: fall
-    # back to that speaker's own recognised segments.
     return [
         {"start": float(segment["start"]), "end": float(segment["end"]),
          "duration": float(segment["end"]) - float(segment["start"])}

@@ -1,18 +1,10 @@
-"""Errors the providers and pipeline raise.
-
-Providers never import FastAPI: a provider module has to be importable in a
-plain script, in a test, and inside the notebook. `ServiceError` carries the
-status code the HTTP layer should use, and `server.py` is the only place that
-turns one into an HTTPException.
-"""
+"""Errors shared by providers, pipeline stages, and the HTTP layer."""
 from __future__ import annotations
 
 from typing import Optional
 
 
 class ServiceError(Exception):
-    """An error with a status code and a message meant for the caller."""
-
     status_code = 500
 
     def __init__(self, message: str, status_code: Optional[int] = None) -> None:
@@ -23,18 +15,14 @@ class ServiceError(Exception):
 
 
 class InvalidRequest(ServiceError):
-    """The caller asked for something the registry does not offer."""
-
     status_code = 400
 
 
 class UnsupportedLanguage(InvalidRequest):
-    """The chosen model does not speak or understand that language."""
+    pass
 
 
 class MissingDependency(ServiceError):
-    """An optional package is not installed in this session."""
-
     status_code = 503
 
     def __init__(self, pip_name: str, purpose: str) -> None:
@@ -47,12 +35,8 @@ class MissingDependency(ServiceError):
 
 
 class MissingCredential(ServiceError):
-    """A gated model needs a token the session does not have."""
-
     status_code = 503
 
 
 class ProviderFailure(ServiceError):
-    """The model ran and failed."""
-
     status_code = 500

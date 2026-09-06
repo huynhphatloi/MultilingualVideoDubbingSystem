@@ -1,11 +1,4 @@
-"""Every provider registry, and the capabilities report built from them.
-
-This module is the source of truth the frontend and n8n read. It imports only
-registry modules, which in turn import nothing heavier than the standard
-library, so `/capabilities` answers correctly in a session where none of the
-optional engines are installed - reporting them as unavailable rather than
-failing to start.
-"""
+"""Provider registries and capability reporting."""
 from __future__ import annotations
 
 from typing import Dict, List, Optional
@@ -47,7 +40,6 @@ def every_model() -> List[ModelSpec]:
 
 
 def capabilities() -> Dict:
-    """The whole catalogue plus what this session can actually run."""
     return {
         "device": device(),
         "languages": L.listing(),
@@ -59,7 +51,6 @@ def capabilities() -> Dict:
 
 
 def consistency_problems() -> List[str]:
-    """Registry invariants, checked by the contract script and the tests."""
     problems = check_language_lists(list(REGISTRIES.values()), L.CODES)
     seen: Dict[str, str] = {}
     for task, entry in REGISTRIES.items():
@@ -69,8 +60,6 @@ def consistency_problems() -> List[str]:
                     f"model id '{spec.id}' is used by both {seen[spec.id]} and {task}"
                 )
             seen[spec.id] = task
-            if spec.reference_required and not spec.supports_voice_cloning:
-                problems.append(f"{spec.id}: requires a reference but does not clone")
             if spec.optional_package and not spec.import_name:
                 problems.append(f"{spec.id}: names a pip package but no import name")
             if spec.module and not spec.module.startswith("providers."):

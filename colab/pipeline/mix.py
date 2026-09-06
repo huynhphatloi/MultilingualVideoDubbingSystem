@@ -1,10 +1,4 @@
-"""Lay the generated lines onto a single track and mix it with the original.
-
-Two modes. Without source separation the original stays quiet underneath, which
-is a voice-over - what this project has always produced. With separation the
-speech stem is dropped entirely and the dub sits on the real background, which
-is what a studio dub sounds like.
-"""
+"""Place generated lines and mix them with the background."""
 from __future__ import annotations
 
 from pathlib import Path

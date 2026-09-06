@@ -1,9 +1,4 @@
-"""Speaker diarization.
-
-Diarization answers "who spoke when", not "who is speaking": the labels are
-SPEAKER_00, SPEAKER_01 and so on, and nothing in this project pretends they are
-names.
-"""
+"""Speaker diarization provider interface."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -28,4 +23,4 @@ class DiarizationProvider(ABC):
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
     ) -> List[Dict]:
-        """Turns as {"speaker_id", "start", "end"}, in time order."""
+        pass

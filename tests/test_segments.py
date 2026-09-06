@@ -1,4 +1,3 @@
-"""The canonical segment schema and the diarization merge."""
 from __future__ import annotations
 
 from dubflow_core import segments as S
@@ -12,7 +11,7 @@ def test_make_segment_has_every_canonical_key():
     made = segment(0, 1.2345, 4.8501)
     for key in S.SEGMENT_KEYS:
         assert key in made
-    assert made["start"] == 1.234 or made["start"] == 1.235  # rounding to ms
+    assert made["start"] == 1.234 or made["start"] == 1.235
     assert made["duration"] == round(made["end"] - made["start"], 3)
     assert made["speaker_id"] == S.DEFAULT_SPEAKER
 
@@ -58,26 +57,6 @@ def test_merge_turns_joins_short_pauses_only():
     ]
 
 
-def test_exclusive_regions_removes_the_overlap_with_other_speakers():
-    turns = [
-        {"speaker_id": "A", "start": 0.0, "end": 10.0},
-        {"speaker_id": "B", "start": 3.0, "end": 6.0},
-    ]
-    regions = S.exclusive_regions(turns, "A")
-    # Longest first, because the reference cutter takes as much clean speech as
-    # it can from the front of this list.
-    assert [(item["start"], item["end"]) for item in regions] == [(6.0, 10.0), (0.0, 3.0)]
-    assert all(region["duration"] >= 1.0 for region in regions)
-
-
-def test_exclusive_regions_can_be_empty_when_speech_always_overlaps():
-    turns = [
-        {"speaker_id": "A", "start": 0.0, "end": 5.0},
-        {"speaker_id": "B", "start": 0.0, "end": 5.0},
-    ]
-    assert S.exclusive_regions(turns, "A") == []
-
-
 def test_renumber_sorts_and_reindexes():
     segments = [segment(9, 5, 6), segment(3, 1, 2)]
     ordered = S.renumber(segments)
@@ -93,7 +72,3 @@ def test_subtitle_prefers_the_translation():
     assert "00:00:00,000 --> 00:00:01,500" in body
 
 
-def test_text_between_returns_what_was_said_in_a_window():
-    segments = [segment(0, 0, 2, "first"), segment(1, 2, 4, "second")]
-    assert S.text_between(segments, 0.0, 2.0) == "first"
-    assert S.text_between(segments, 0.0, 4.0) == "first second"

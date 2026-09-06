@@ -15,9 +15,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# The Colab image receives torch from its runtime. A local image has to supply
-# it explicitly. Keeping the wheel source as a build argument lets the GPU
-# override select the matching CUDA wheel without maintaining another image.
+# Select a CPU or CUDA wheel through the build argument.
 RUN python -m pip install --upgrade pip \
  && python -m pip install --index-url "${TORCH_INDEX_URL}" "torch==${TORCH_VERSION}"
 
@@ -34,6 +32,4 @@ RUN mkdir -p /data/jobs /models/huggingface \
 USER app
 EXPOSE 8000
 
-# Imports remain identical to the notebook service. Models are downloaded and
-# loaded lazily on the first request, not while the image is built or started.
 CMD ["uvicorn", "colab.server:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "300"]

@@ -1,9 +1,4 @@
-"""Microsoft Edge voices.
-
-The catalogue is fetched rather than pinned, because Microsoft renames voices.
-Two locale prefixes do not match this project's codes - Norwegian is `nb` and
-Tagalog is `fil` - which is why the old direct prefix match failed for them.
-"""
+"""Microsoft Edge speech generation."""
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +10,6 @@ from core.media import Scratch, normalise_speech
 from providers.base import ModelSpec
 from providers.tts.base import SpeechRequest, TTSProvider
 
-#: Application code -> the prefix the Edge locale actually uses.
 LOCALE_OVERRIDES: Dict[str, str] = {"no": "nb", "tl": "fil"}
 
 
@@ -60,7 +54,6 @@ class EdgeProvider(TTSProvider):
             )
             if not raw.exists() or raw.stat().st_size == 0:
                 raise ProviderFailure("Edge TTS returned no audio")
-            # `rate` already applied the speed, so convert without atempo.
             normalise_speech(raw, out)
 
 

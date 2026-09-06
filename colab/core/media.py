@@ -1,9 +1,4 @@
-"""ffmpeg and ffprobe helpers.
-
-Everything that touches audio goes through here so the flags stay in one place:
-speech is mono 24 kHz for the engines, 16 kHz for the recognisers, and 48 kHz
-stereo for the mix.
-"""
+"""ffmpeg and ffprobe helpers."""
 from __future__ import annotations
 
 import subprocess
@@ -66,7 +61,6 @@ def normalise_speech(
     speed: float = 1.0,
     rate: int = SPEECH_SAMPLE_RATE,
 ) -> None:
-    """Any engine's output becomes mono PCM at `rate`, optionally re-timed."""
     filters: List[str] = []
     if abs(speed - 1.0) > 1e-3:
         filters.extend(atempo_chain(speed))
@@ -78,7 +72,6 @@ def normalise_speech(
 
 
 def retime(source: Path, target: Path, speed: float) -> None:
-    """Change the speed of an existing clip without resampling it."""
     ffmpeg([
         "-i", str(source), "-af", atempo_filter(speed),
         "-c:a", "pcm_s16le", str(target),
@@ -123,7 +116,6 @@ def write_waveform(
     target: Path,
     speed: float = 1.0,
 ) -> None:
-    """Write a model's raw output, applying speed through ffmpeg if asked."""
     import soundfile
 
     if abs(speed - 1.0) <= 1e-3:
@@ -139,8 +131,6 @@ def write_waveform(
 
 
 class Scratch:
-    """A temporary file that is always cleaned up."""
-
     def __init__(self, suffix: str = ".wav") -> None:
         self.suffix = suffix
         self.path: Optional[Path] = None

@@ -17,4 +17,4 @@ class TranslationProvider(ABC):
 
     @abstractmethod
     def translate(self, texts: Sequence[str], source: str, target: str) -> List[str]:
-        """One translation per input, in the same order."""
+        pass

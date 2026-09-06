@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Write one notebook backend's URL and token into .env.
-
-The notebook prints a ready-to-run `make colab URL=... TOKEN=...` line, so a
-new session costs one paste instead of editing a file by hand. Existing keys,
-comments and unrelated settings are preserved.
-"""
+"""Write a notebook backend URL and token to .env."""
 from __future__ import annotations
 
 import sys
@@ -16,7 +11,6 @@ EXAMPLE = ROOT / ".env.example"
 
 
 def assign(lines: list[str], key: str, value: str) -> list[str]:
-    """Replace the line defining `key`, or append one if it is absent."""
     replacement = f"{key}={value}"
     for index, line in enumerate(lines):
         stripped = line.strip()

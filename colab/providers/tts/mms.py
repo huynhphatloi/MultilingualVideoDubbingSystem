@@ -1,9 +1,4 @@
-"""Meta MMS-TTS: one small VITS checkpoint per language.
-
-Only 34 of the application's languages have a published checkpoint. The
-registry lists exactly those, so a request for Japanese is refused before any
-download is attempted instead of failing with a 404 from the Hub.
-"""
+"""Meta MMS-TTS speech generation."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -46,7 +41,6 @@ class MMSTTSProvider(TTSProvider):
 
         encoded = self.tokenizer(request.text, return_tensors="pt")
         encoded = {name: value.to(device()) for name, value in encoded.items()}
-        # MMS varies its own rate, so no atempo pass is needed afterwards.
         self.model.speaking_rate = request.speed
         with torch.inference_mode():
             waveform = self.model(**encoded).waveform

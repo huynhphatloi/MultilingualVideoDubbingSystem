@@ -1,8 +1,4 @@
-"""Split the original track so the dub can sit on the real background.
-
-Optional and off by default: it is the slowest stage in the pipeline and the
-voice-over mix works without it.
-"""
+"""Separate original speech from the background track."""
 from __future__ import annotations
 
 from pathlib import Path

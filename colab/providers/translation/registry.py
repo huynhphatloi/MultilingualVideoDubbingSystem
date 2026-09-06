@@ -1,9 +1,4 @@
-"""Translation engines.
-
-NLLB-200 covers all 200 FLORES languages, which includes every code in the
-application table. SeamlessM4T's text side covers every code except Sinhala,
-which its language table does not list.
-"""
+"""Translation model registry."""
 from __future__ import annotations
 
 from dubflow_core import languages as L
@@ -58,8 +53,6 @@ REGISTRY.add(ModelSpec(
     provider="seamless",
     display_name="SeamlessM4T medium (text)",
     repo_id="facebook/hf-seamless-m4t-medium",
-    #: Every application language appears in the M4T target-text column except
-    #: Sinhala, which is absent from the table.
     languages=L.exclude("si"),
     multilingual=True,
     license="cc-by-nc-4.0",

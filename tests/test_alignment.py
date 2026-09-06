@@ -1,4 +1,3 @@
-"""Duration alignment arithmetic."""
 from __future__ import annotations
 
 from dubflow_core import alignment as A
@@ -40,7 +39,6 @@ def test_a_segment_without_a_measured_clip_is_unmeasured():
 def test_the_window_runs_to_the_next_segment_not_the_segment_end():
     assert A.window_for(1.0, 3.0, 6.0, 20.0) == 5.0
     assert A.window_for(1.0, 3.0, None, 20.0) == 19.0
-    # An overlapping neighbour never shrinks the window below the segment.
     assert A.window_for(1.0, 3.0, 1.5, 20.0) == 2.0
 
 
@@ -50,9 +48,9 @@ def test_plan_segments_uses_each_neighbour_in_time_order():
         {"start": 2.0, "end": 4.0, "tts_duration_raw": 1.0},
     ]
     first, second = A.plan_segments(segments, media_duration=10.0)
-    assert first.window == 2.0          # bounded by the next segment
+    assert first.window == 2.0
     assert first.status in {"aligned", "clamped"}
-    assert second.window == 8.0         # bounded by the media duration
+    assert second.window == 8.0
     assert second.status == "fits"
 
 

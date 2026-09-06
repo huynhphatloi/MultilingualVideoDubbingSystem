@@ -1,8 +1,4 @@
-"""Pull two audio tracks out of the video.
-
-`original.wav` is the full-quality track the mix and the voice references use;
-`asr.wav` is the 16 kHz mono track every recogniser and the diarizer want.
-"""
+"""Extract mixing and recognition audio from the source video."""
 from __future__ import annotations
 
 from pathlib import Path

@@ -236,8 +236,6 @@
       margin-top: 20px;
     }
 
-    /* One model per row: the names carry a provider and a checkpoint, which
-       does not fit in half of this column. */
     .form-grid.stack { grid-template-columns: 1fr; gap: 14px; }
 
     label {
@@ -300,7 +298,6 @@
     .pipeline-panel .panel-kicker { color: #aeb9b3; }
     .pipeline-panel .badge { border-color: #47534d; color: var(--accent); background: #2b3731; }
 
-    /* ---- job history ------------------------------------------------ */
     .history { margin-bottom: 18px; }
 
     .history-head {
@@ -325,8 +322,6 @@
       cursor: pointer;
     }
 
-    /* Four rows before it scrolls: enough to see the run before this one
-       without pushing the stage list off the screen. */
     .history-list { max-height: 188px; overflow-y: auto; }
 
     .history-row {
@@ -361,8 +356,6 @@
 
     .history-sub { color: #96a29b; font-size: 11px; }
 
-    /* The configuration each run used, so two rows can be compared at a glance
-       rather than by selecting them one after the other. */
     .history-config {
       overflow: hidden;
       margin-top: 2px;
@@ -396,6 +389,7 @@
     .history-state.running { color: #0d1512; background: var(--accent); }
     .history-state.completed { color: #b7f0d6; background: #24402f; }
     .history-state.failed { color: #ffc4bd; background: #4a2723; }
+    .history-state.stalled { color: #f0dcb0; background: #4a3e23; }
 
     .history-delete {
       flex: none;
@@ -552,7 +546,6 @@
       footer { flex-direction: column; }
     }
   
-    /* ---- model and feature controls -------------------------------- */
     .section-title {
       display: flex;
       align-items: center;
@@ -719,13 +712,6 @@
                 <span class="option-hint" id="hint-diarization">One voice per speaker</span>
               </span>
             </label>
-            <label class="option" id="option-cloning">
-              <input type="checkbox" id="enable-voice-cloning">
-              <span>
-                <span class="option-name">Voice cloning</span>
-                <span class="option-hint" id="hint-cloning">Keep the original speaker's voice</span>
-              </span>
-            </label>
             <label class="option" id="option-alignment">
               <input type="checkbox" id="enable-alignment" checked>
               <span>
@@ -793,9 +779,6 @@
   </div>
 
   <script>
-    // The stage list mirrors the local API's STAGES, plus the upload step the
-    // browser performs itself. Optional stages report themselves as skipped
-    // rather than silently disappearing.
     const STAGES = [
       { id: "upload", name: "Upload video", tool: "FastAPI storage" },
       { id: "extract", name: "Extract audio", tool: "FFmpeg" },
@@ -803,7 +786,6 @@
       { id: "transcribe", name: "Speech recognition", tool: "ASR model" },
       { id: "merge_segments", name: "Merge speakers + transcript", tool: "Time overlap" },
       { id: "translate", name: "Translate", tool: "Translation model" },
-      { id: "voice_references", name: "Voice references", tool: "Per-speaker samples", optional: true },
       { id: "synthesize", name: "Generate voice", tool: "TTS model" },
       { id: "align", name: "Align speech", tool: "Duration fitting", optional: true },
       { id: "separate", name: "Source separation", tool: "Demucs", optional: true },
@@ -850,15 +832,12 @@
     };
     const toggles = {
       diarization: document.getElementById("enable-diarization"),
-      voice_cloning: document.getElementById("enable-voice-cloning"),
       alignment: document.getElementById("enable-alignment"),
       source_separation: document.getElementById("enable-source-separation")
     };
 
     let capabilities = null;
     let pollTimer = null;
-    //: The job the stage panel is showing. A run outlives the page that started
-    //: it, so this is restored from the history rather than kept only in memory.
     let activeJob = null;
     let pollFailed = false;
 
@@ -928,7 +907,6 @@
       return payload;
     }
 
-    // ---- capabilities -------------------------------------------------
     function modelsOf(task) {
       const groups = (capabilities && capabilities.providers && capabilities.providers[task]) || [];
       return groups.flatMap(group => group.models.map(model => ({ ...model, group })));
@@ -958,15 +936,9 @@
     function fillSelector(task, keepModel) {
       const control = controls[task];
       const models = eligible(task);
-      // Keep the operator's choice; fall back to the backend's own default so a
-      // fresh page opens on the model the API would have picked anyway.
       const fallback = (capabilities && capabilities.defaults || {})[task];
       const previous = keepModel || control.model.value || fallback || "";
 
-      // The provider is an <optgroup> label rather than a second select:
-      // eleven of the seventeen providers register exactly one model, so their
-      // provider box was a dropdown with a single option. modelsOf() returns
-      // one provider's models together, so the groups come out contiguous.
       control.model.innerHTML = "";
       let group = null;
       let groupedUnder = null;
@@ -992,9 +964,6 @@
       return models.find(model => model.id === control.model.value) || null;
     }
 
-    // `forced` is the state a disabled box must hold: false for a feature this
-    // session cannot do, true for one the chosen engine cannot do without. The
-    // two used to be decided in different places and contradict each other.
     function optionState(name, enabled, hint, forced) {
       const box = toggles[name];
       const wrapper = box.closest(".option");
@@ -1006,7 +975,7 @@
       if (hint) hintNode.textContent = hint;
     }
 
-    function refreshOptions(ttsModel) {
+    function refreshOptions() {
       const diarization = modelsOf("diarization").filter(model => model.available);
       optionState(
         "diarization",
@@ -1015,16 +984,6 @@
           ? "One voice per speaker"
           : "pyannote is not installed on this backend"
       );
-
-      if (!ttsModel) {
-        optionState("voice_cloning", false, "Pick a voice model first");
-      } else if (!ttsModel.supports_voice_cloning) {
-        optionState("voice_cloning", false, `${ttsModel.display_name} uses a stock voice`, false);
-      } else if (ttsModel.reference_required) {
-        optionState("voice_cloning", false, `${ttsModel.display_name} only speaks in a cloned voice`, true);
-      } else {
-        optionState("voice_cloning", true, "Keep the original speaker's voice");
-      }
 
       const separation = modelsOf("separation").filter(model => model.available);
       optionState(
@@ -1040,7 +999,7 @@
       const asrModel = fillSelector("asr", wanted.asr);
       const translationModel = fillSelector("translation", wanted.translation);
       const ttsModel = fillSelector("tts", wanted.tts);
-      refreshOptions(ttsModel);
+      refreshOptions();
 
       const targetNote = document.getElementById("target-note");
       const missing = [];
@@ -1089,7 +1048,6 @@
         : [{ code: "vi", name: "Vietnamese" }]);
 
       if (!capabilities.available) {
-        // An outdated session is not an absent one, and the fix is different.
         const outdated = capabilities.reason === "outdated";
         backendBadge.textContent = outdated ? "Backend out of date" : "No AI backend";
         showBanner(capabilities.hint || "No AI backend is answering. Start the notebook and point .env at it.");
@@ -1103,7 +1061,6 @@
       refreshAll();
     }
 
-    // ---- job progress --------------------------------------------------
     function resetStages() {
       renderStageList();
       progressBar.style.width = "0%";
@@ -1144,13 +1101,11 @@
       progressBar.style.width = `${Math.round((counted / STAGES.length) * 100)}%`;
       jobIdLabel.textContent = `#${job.job_id}`;
 
-      // Everything before the failure is still on disk, so the offer is to
-      // resume rather than to upload the video a second time.
-      const failedAt = (job.error || {}).stage;
-      retryButton.className = job.status === "failed" ? "retry show" : "retry";
+      const stuckAt = (job.error || {}).stage || (job.stalled_for ? job.current_stage : null);
+      retryButton.className = stuckAt ? "retry show" : "retry";
       retryButton.disabled = false;
-      retryButton.textContent = failedAt
-        ? `Retry from "${failedAt}" — earlier stages are reused`
+      retryButton.textContent = stuckAt
+        ? `Resume from "${stuckAt}" — earlier stages are reused`
         : "Retry";
 
       if (job.status === "failed") {
@@ -1194,9 +1149,6 @@
       if (!jobId) return null;
       try {
         const job = await readJson(await fetch(`/jobs/${jobId}`));
-        // A restart of the service, or a laptop waking up, drops one poll. The
-        // next one works, so the warning has to go away by itself - otherwise a
-        // finished job sits behind a stale "Failed to fetch".
         if (pollFailed) {
           pollFailed = false;
           clearMessage();
@@ -1210,7 +1162,6 @@
       }
     }
 
-    // ---- history -------------------------------------------------------
     function timeAgo(stamp) {
       if (!stamp) return "";
       const seconds = Math.max(0, (Date.now() - new Date(stamp).getTime()) / 1000);
@@ -1223,6 +1174,7 @@
     function historyState(job) {
       if (job.status === "completed") return "completed";
       if (job.status === "failed") return "failed";
+      if (job.stalled_for) return "stalled";
       return "running";
     }
 
@@ -1236,7 +1188,9 @@
         const state = historyState(job);
         const progress = state === "failed"
           ? `failed at ${(job.error || {}).stage || "?"}`
-          : job.progress;
+          : state === "stalled"
+            ? `no progress for ${Math.round(job.stalled_for / 60)}m at ${job.current_stage || "?"}`
+            : job.progress;
         return `
           <button class="history-row${job.job_id === activeJob ? " selected" : ""}"
                   type="button" data-job="${job.job_id}">
@@ -1251,9 +1205,6 @@
       }).join("");
     }
 
-    // What the run was configured with: the pair of languages and the three
-    // models. The source language shown is the one that was asked for, so a run
-    // on auto-detect reads as "auto" rather than as whatever it turned out to be.
     function configLine(job) {
       const languages =
         `${job.requested_source_language || "auto"} → ${job.target_language || "?"}`;
@@ -1261,13 +1212,10 @@
       return models.length ? `${languages} · ${models.join(" · ")}` : languages;
     }
 
-    // Only what differs from the defaults, so a row stays readable: the three
-    // opt-in features when they are on, and alignment when it is off.
     function flagTags(job) {
       const features = job.features || {};
       const tags = [];
       if (features.diarization) tags.push(["diarize", ""]);
-      if (features.voice_cloning) tags.push(["clone", ""]);
       if (features.source_separation) tags.push(["separate", ""]);
       if (features.alignment === false) tags.push(["no align", "off"]);
       return tags.map(([name, tone]) =>
@@ -1290,29 +1238,20 @@
       }
     }
 
-    // Restoring the form is what makes a past job useful: it says what was
-    // actually run, and it is the starting point for running it again - on the
-    // same video after a fix, or on a new one with the same settings.
     function applyJobConfig(job) {
       const config = (job || {}).config;
       if (!config) return false;
 
-      // config.source_language is what was ASKED for ("auto"), which is what
-      // the form should show. job.source_language is what the recogniser then
-      // detected, and putting that back would silently turn auto-detect off.
+      // Restore the requested language, not the detected one.
       if (config.source_language) sourceSelect.value = config.source_language;
       if (config.target_language) targetSelect.value = config.target_language;
 
-      // The model lists are filtered by language, so they have to be rebuilt
-      // before a stored choice can be selected in them.
       refreshAll({
         asr: (config.asr || {}).model,
         translation: (config.translation || {}).model,
         tts: (config.tts || {}).model,
       });
 
-      // After refreshAll: refreshOptions forces the boxes an engine decides for
-      // itself, and those must win over the stored value.
       const features = config.features || {};
       for (const [name, box] of Object.entries(toggles)) {
         if (!box.disabled && typeof features[name] === "boolean") {
@@ -1328,9 +1267,6 @@
       clearInterval(pollTimer);
       const job = await pollJob(jobId);
       await loadHistory();
-      // The form is restored silently: every row already shows the settings it
-      // ran with, and the selected row is highlighted, so a toast repeating it
-      // was one more line to read.
       if (job) applyJobConfig(job);
       if (job && job.status !== "completed" && job.status !== "failed") {
         setBusy(true, "Dubbing in progress…");
@@ -1392,13 +1328,10 @@
       data.append("file", fileInput.files[0]);
       data.append("source_language", sourceSelect.value);
       data.append("target_language", targetSelect.value);
-      // A model id is enough: Registry.resolve() derives the provider from it,
-      // and sending both only creates a pair that can contradict each other.
       for (const [task, control] of Object.entries(controls)) {
         if (control.model.value) data.append(`${task}_model`, control.model.value);
       }
-      // Send every flag explicitly: an unchecked box is absent from a form, and
-      // absent means "use the default", which is not the same as "off".
+      // An omitted checkbox means "use default", not "off".
       for (const [name, box] of Object.entries(toggles)) {
         data.append(`enable_${name}`, box.checked ? "true" : "false");
       }
@@ -1449,8 +1382,6 @@
 
     renderStageList();
     loadCapabilities();
-    // A run outlives the page that started it, so the history is loaded on
-    // open: a reload, or a second browser tab, can pick a job back up.
     loadHistory();
   </script>
 </body>

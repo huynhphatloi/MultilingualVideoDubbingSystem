@@ -1,17 +1,3 @@
-"""The Colab notebook's launch cell, exercised the way Colab runs it.
-
-These tests exist because two bugs shipped inside this one cell. The first made
-`Run all` silently keep the previous build: `import` is a no-op once a module is
-cached, and the old server thread was still alive, so a pulled checkout sat on
-disk unused while the tunnel got a fresh URL. The second was the fix's own
-fault - reordering the imports exposed that `sys.path` was only ever set up as a
-side effect of importing `server`, so importing anything else first failed with
-`No module named 'dubflow_core'`.
-
-The integration test therefore reproduces Colab's environment rather than the
-test runner's: the working directory is the repository's `colab/` folder and the
-repository root is *not* importable until the cell makes it so.
-"""
 from __future__ import annotations
 
 import json
@@ -32,7 +18,13 @@ notebook_deps = pytest.importorskip("uvicorn") and pytest.importorskip("fastapi"
 
 def launch_cell() -> str:
     notebook = json.loads((ROOT / "colab/ai_service.ipynb").read_text(encoding="utf-8"))
-    return "".join(notebook["cells"][4]["source"])
+    matches = [
+        "".join(cell["source"])
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "code" and "uvicorn.Server" in "".join(cell["source"])
+    ]
+    assert len(matches) == 1, f"expected one launch cell, found {len(matches)}"
+    return matches[0]
 
 
 def code_cells():  # noqa: ANN201
@@ -45,11 +37,6 @@ def code_cells():  # noqa: ANN201
 
 
 def as_python(source: str) -> str:
-    """A cell as plain Python: `!shell` and `%magic` lines become `pass`.
-
-    The indentation has to survive, because those lines appear inside `if`
-    blocks in the checkout cell.
-    """
     lines = []
     for line in source.split("\n"):
         stripped = line.lstrip()
@@ -60,8 +47,6 @@ def as_python(source: str) -> str:
     return "\n".join(lines)
 
 
-#: Names that must be imported by the cell that uses them, rather than borrowed
-#: from whichever earlier cell happened to import them.
 BORROWABLE = {
     "subprocess", "re", "os", "sys", "time", "threading", "secrets", "json",
     "uvicorn", "Path", "shutil", "textwrap",
@@ -69,8 +54,6 @@ BORROWABLE = {
 
 
 class TestEveryCell:
-    """A cell must stand on its own: notebook cells get re-run individually."""
-
     def test_every_code_cell_is_valid_python(self):
         import ast
 
@@ -81,8 +64,6 @@ class TestEveryCell:
                 raise AssertionError(f"cell {index} does not parse: {failure}") from failure
 
     def test_no_cell_borrows_an_import_from_another(self):
-        """The tunnel cell once used `subprocess` because an earlier cell had
-        imported it; removing that unused import from the other cell broke it."""
         import ast
 
         for index, source in code_cells():
@@ -138,11 +119,6 @@ class TestLaunchCellStatics:
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="pipeline import needs FFmpeg tooling")
 def test_the_cell_reloads_a_pulled_checkout_without_a_restart(tmp_path):
-    """Run the cell, change the checkout underneath it, run it again.
-
-    This is what `git pull` + `Run all` does inside a live Colab session. Before
-    the fix the second run reported the first run's version.
-    """
     shutil.copytree(ROOT / "colab", tmp_path / "colab")
     shutil.copytree(ROOT / "dubflow_core", tmp_path / "dubflow_core")
 
@@ -150,8 +126,6 @@ def test_the_cell_reloads_a_pulled_checkout_without_a_restart(tmp_path):
         """
         import json, os, sys, urllib.request
         os.chdir({colab!r})
-        # Colab's situation exactly: the colab/ folder is importable because it
-        # is the working directory; the repository root above it is not.
         sys.path.insert(0, {colab!r})
         try:
             import dubflow_core
@@ -173,8 +147,6 @@ def test_the_cell_reloads_a_pulled_checkout_without_a_restart(tmp_path):
         exec(CELL, globals())
         print("VERSION_1", version())
 
-        # A `git pull` lands new code on disk while the session keeps running.
-        # Read before opening for write: "w" truncates on open.
         target = {server!r}
         source = open(target).read()
         assert 'version="4.0"' in source, "the checkout to modify was not found"

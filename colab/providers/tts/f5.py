@@ -1,10 +1,4 @@
-"""F5-TTS: the v1 base checkpoint and the Vietnamese community one.
-
-F5 wants the transcript of the reference clip. Passing an empty string makes it
-transcribe the clip itself, which is what this project used to do; now that the
-pipeline knows what the reference speaker said, it passes the text and saves
-that pass.
-"""
+"""F5-TTS providers."""
 from __future__ import annotations
 
 import os
@@ -15,9 +9,7 @@ from core.media import Scratch, normalise_speech
 from providers.base import ModelSpec
 from providers.tts.base import SpeechRequest, TTSProvider
 
-#: Checkpoint names as f5_tts.api.F5TTS understands them.
 _CHECKPOINTS = {"f5_base": "F5TTS_v1_Base", "f5_vi": None}
-#: Kept so an existing .env that pins the Vietnamese checkpoint still wins.
 VI_MODEL_ENV = "F5_VI_MODEL"
 
 
@@ -44,7 +36,6 @@ class F5Provider(TTSProvider):
         with Scratch(".wav") as raw:
             self.model.infer(
                 ref_file=str(sample),
-                # An empty ref_text makes F5 transcribe the reference itself.
                 ref_text=(request.reference_text or "").strip(),
                 gen_text=request.text,
                 file_wave=str(raw),

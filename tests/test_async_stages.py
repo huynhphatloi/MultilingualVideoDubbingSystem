@@ -1,11 +1,3 @@
-"""The background-task path that keeps a long stage from being cut off.
-
-A Cloudflare quick tunnel abandons a request after about a hundred seconds, so
-transcribing or separating a real video could never answer in time. The stage
-endpoints therefore accept `async_mode`: they return a task id at once and the
-caller polls. These tests cover the store, the endpoint contract, and the local
-service's poller - including its fallback to a backend that has neither.
-"""
 from __future__ import annotations
 
 
@@ -30,9 +22,6 @@ def wait_for(predicate, timeout: float = 5.0) -> bool:  # noqa: ANN001
     return False
 
 
-# ==========================================================================
-# The task store
-# ==========================================================================
 @pytest.fixture
 def store():  # noqa: ANN201
     import tasks
@@ -62,7 +51,6 @@ def test_a_failure_keeps_the_status_code_it_would_have_had(store):
     assert wait_for(lambda: store.public(state["task_id"])["done"])
     failed = store.public(state["task_id"])
     assert failed["status"] == store.FAILED
-    # 400, not 500: an async caller learns exactly what a synchronous one would.
     assert failed["status_code"] == 400
     assert "Japanese" in failed["error"]
 
@@ -85,8 +73,6 @@ def test_polling_an_unknown_task_is_a_404(store):
 
 
 def test_evicting_a_task_deletes_the_file_it_produced(store, tmp_path):
-    """A separated stem is the largest thing this service writes, and Colab's
-    disk is small, so the task owns it."""
     stem = tmp_path / "background.wav"
     stem.write_bytes(b"audio")
     store.LIMIT = 1
@@ -102,9 +88,6 @@ def test_evicting_a_task_deletes_the_file_it_produced(store, tmp_path):
         store.LIMIT = 64
 
 
-# ==========================================================================
-# The endpoint contract
-# ==========================================================================
 @pytest.fixture
 def colab():  # noqa: ANN201
     import server
@@ -118,8 +101,6 @@ def colab():  # noqa: ANN201
 
 @pytest.fixture
 def stub_translation(monkeypatch):  # noqa: ANN201
-    """A translation engine that needs no weights, so the async contract can be
-    tested without a GPU."""
     import providers
 
     class Engine:
@@ -136,8 +117,6 @@ def stub_translation(monkeypatch):  # noqa: ANN201
 
 
 def test_translate_returns_a_task_id_instead_of_waiting(colab, stub_translation):
-    """The whole point: the request answers immediately, so nothing is holding
-    a connection open while the model runs."""
     response = colab.post("/translate", json={
         "source_language": "en", "target_language": "vi",
         "texts": ["Hello"], "async_mode": True,
@@ -153,9 +132,6 @@ def test_translate_returns_a_task_id_instead_of_waiting(colab, stub_translation)
 
 
 def test_work_that_is_already_done_needs_no_task(colab):
-    """source == target loads no model, so there is nothing to defer: the answer
-    comes back directly even when async_mode is asked for, and the local
-    service's poller accepts that rather than insisting on a task id."""
     response = colab.post("/translate", json={
         "source_language": "en", "target_language": "en",
         "texts": ["Hello"], "async_mode": True,
@@ -165,7 +141,6 @@ def test_work_that_is_already_done_needs_no_task(colab):
 
 
 def test_the_same_call_without_async_mode_still_answers_directly(colab):
-    """Existing callers must not have to change: async is opt-in."""
     response = colab.post("/translate", json={
         "source_language": "en", "target_language": "en", "texts": ["Hello"],
     })
@@ -174,8 +149,6 @@ def test_the_same_call_without_async_mode_still_answers_directly(colab):
 
 
 def test_a_rejected_request_fails_before_a_task_is_created(colab):
-    """Validation still happens in the request, so a bad configuration is a 4xx
-    the caller sees at once rather than a task that fails later."""
     response = colab.post("/translate", json={
         "source_language": "en", "target_language": "vi",
         "texts": [], "async_mode": True,
@@ -194,9 +167,6 @@ def test_downloading_a_task_that_produced_no_file_is_a_409(colab, stub_translati
     assert colab.get(f"/tasks/{task_id}/download").status_code == 409
 
 
-# ==========================================================================
-# The local service's poller
-# ==========================================================================
 class Reply:
     def __init__(self, payload, status_code=200):  # noqa: ANN001
         self._payload = payload
@@ -214,7 +184,6 @@ def test_the_local_service_submits_and_then_polls(monkeypatch):
     monkeypatch.setattr(app, "ASYNC_STAGES", True)
     monkeypatch.setattr(app, "TASK_POLL_INTERVAL", 0)
     seen = []
-    #: Report "running" once, so the poller has to come back for the answer.
     polls = {"count": 0}
 
     def fake_request(path, method="POST", **kwargs):  # noqa: ANN001, ANN202
@@ -239,8 +208,6 @@ def test_the_local_service_submits_and_then_polls(monkeypatch):
 
 
 def test_a_backend_without_tasks_is_answered_synchronously(monkeypatch):
-    """An older notebook ignores the extra field and replies 200 with the real
-    answer. That is not an error, so the poller must not insist on a task."""
     import app
 
     monkeypatch.setattr(app, "ASYNC_STAGES", True)
@@ -294,7 +261,6 @@ def test_a_task_that_never_finishes_times_out_with_a_usable_message(monkeypatch)
 
 
 def test_turning_the_feature_off_restores_the_single_request(monkeypatch):
-    """ASYNC_STAGES=0 has to reach the backend exactly as it always did."""
     import app
 
     monkeypatch.setattr(app, "ASYNC_STAGES", False)

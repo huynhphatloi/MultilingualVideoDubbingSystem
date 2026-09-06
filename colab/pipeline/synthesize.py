@@ -1,9 +1,4 @@
-"""Speak every translated line.
-
-Each segment is voiced with its own speaker's reference when cloning is on, so a
-two-person conversation keeps two voices. Nothing here changes the timing: the
-raw length is recorded and the alignment stage decides what to do about it.
-"""
+"""Generate speech for each translated segment."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,7 +14,6 @@ NAME = "synthesize"
 def run(job: dict, folder: Path) -> None:
     config = rebuild(job)
     provider = providers.tts.load(config.tts, config.target_language)
-    references = job.get("references") or {}
     output_dir = folder / "tts"
     output_dir.mkdir(exist_ok=True)
 
@@ -29,15 +23,12 @@ def run(job: dict, folder: Path) -> None:
         if not text:
             continue
         speaker = segment.get("speaker_id")
-        reference = references.get(speaker) or {}
         output = output_dir / f"{segment['id']:04d}.wav"
         provider.synthesize(
             SpeechRequest(
                 text=text,
                 language=config.target_language,
                 speed=1.0,
-                reference=(folder / reference["file"]) if reference.get("file") else None,
-                reference_text=reference.get("text"),
                 speaker_id=speaker,
             ),
             output,

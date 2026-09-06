@@ -20,7 +20,6 @@ REGISTRY.add(ModelSpec(
     provider="pyannote",
     display_name="pyannote speaker-diarization 3.1",
     repo_id="pyannote/speaker-diarization-3.1",
-    #: Diarization does not care which language is spoken.
     languages=(),
     multilingual=True,
     license="mit",

@@ -1,4 +1,3 @@
-"""The optional Docker overlay turns the notebook API into a local service."""
 from __future__ import annotations
 
 import sys
