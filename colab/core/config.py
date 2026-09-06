@@ -68,7 +68,6 @@ class Features:
     voice_cloning: bool = False
     alignment: bool = True
     source_separation: bool = False
-    lip_sync: bool = False
 
     def public(self) -> Dict[str, bool]:
         return {
@@ -76,7 +75,6 @@ class Features:
             "voice_cloning": self.voice_cloning,
             "alignment": self.alignment,
             "source_separation": self.source_separation,
-            "lip_sync": self.lip_sync,
         }
 
 
@@ -90,7 +88,6 @@ class JobConfig:
     features: Features = field(default_factory=Features)
     diarization: Optional[ModelSpec] = None
     separation: Optional[ModelSpec] = None
-    lipsync: Optional[ModelSpec] = None
     limits: align.Limits = align.Limits()
     min_speakers: Optional[int] = None
     max_speakers: Optional[int] = None
@@ -119,8 +116,6 @@ class JobConfig:
             payload["diarization"] = choice(self.diarization)
         if self.separation is not None:
             payload["separation"] = choice(self.separation)
-        if self.lipsync is not None:
-            payload["lipsync"] = choice(self.lipsync)
         payload["alignment_limits"] = {
             "min_speed": self.limits.min_speed,
             "max_speed": self.limits.max_speed,
@@ -236,7 +231,6 @@ def build(values: Mapping[str, Any]) -> JobConfig:
         ),
         alignment=as_bool(values.get("enable_alignment"), True),
         source_separation=as_bool(values.get("enable_source_separation"), False),
-        lip_sync=as_bool(values.get("enable_lip_sync"), False),
     )
 
     if features.voice_cloning and not tts_spec.supports_voice_cloning:
@@ -269,21 +263,6 @@ def build(values: Mapping[str, Any]) -> JobConfig:
         )
         providers.registry("separation").require_available(separation_spec)
 
-    lipsync_spec = None
-    if features.lip_sync:
-        if not providers.registry("lipsync").ids():
-            raise InvalidRequest(
-                "Lip sync is switched on but this build registers no lip-sync "
-                "provider. See colab/providers/lipsync/registry.py for what "
-                "adding one involves."
-            )
-        lipsync_spec = providers.find(
-            "lipsync",
-            _first(values, "lipsync_provider"),
-            _first(values, "lipsync_model") or providers.DEFAULTS["lipsync"],
-        )
-        providers.registry("lipsync").require_available(lipsync_spec)
-
     return JobConfig(
         source_language=source,
         target_language=target,
@@ -293,7 +272,6 @@ def build(values: Mapping[str, Any]) -> JobConfig:
         features=features,
         diarization=diarization_spec,
         separation=separation_spec,
-        lipsync=lipsync_spec,
         limits=_limits(values),
         min_speakers=_speakers(values, "min_speakers"),
         max_speakers=_speakers(values, "max_speakers"),

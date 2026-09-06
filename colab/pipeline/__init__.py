@@ -2,8 +2,8 @@
 
 Each stage is a module with a `run(job, folder)` and, when it is optional, an
 `enabled(job)`. A stage that is switched off records itself as skipped and the
-next one carries on, so a pipeline without diarization, alignment, separation or
-lip sync is the same code path as one with all four.
+next one carries on, so a pipeline without diarization, alignment or separation
+is the same code path as one with all three.
 """
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from pipeline import (
     align,
     diarize,
     extract,
-    lipsync,
     merge_segments,
     mix,
     render,
@@ -38,7 +37,6 @@ PIPELINE: List[Tuple[str, object]] = [
     ("align", align),
     ("separate", separate),
     ("mix", mix),
-    ("lipsync", lipsync),
     ("render", render),
 ]
 
@@ -53,7 +51,6 @@ STAGE_SLOTS = {
     "translate": "translation",
     "synthesize": "tts",
     "separate": "separation",
-    "lipsync": "lipsync",
 }
 
 

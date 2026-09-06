@@ -236,6 +236,10 @@
       margin-top: 20px;
     }
 
+    /* One model per row: the names carry a provider and a checkpoint, which
+       does not fit in half of this column. */
+    .form-grid.stack { grid-template-columns: 1fr; gap: 14px; }
+
     label {
       display: block;
       margin-bottom: 8px;
@@ -561,31 +565,19 @@
           </div>
 
           <p class="section-title">Models</p>
-          <div class="form-grid" style="margin-top:0">
+          <div class="form-grid stack" style="margin-top:0">
             <div class="field">
-              <label for="asr-provider">Speech recognition provider</label>
-              <select id="asr-provider" name="asr_provider"></select>
-            </div>
-            <div class="field">
-              <label for="asr-model">Speech recognition model</label>
+              <label for="asr-model">Speech recognition</label>
               <select id="asr-model" name="asr_model"></select>
               <span class="field-note" id="asr-note"></span>
             </div>
             <div class="field">
-              <label for="translation-provider">Translation provider</label>
-              <select id="translation-provider" name="translation_provider"></select>
-            </div>
-            <div class="field">
-              <label for="translation-model">Translation model</label>
+              <label for="translation-model">Translation</label>
               <select id="translation-model" name="translation_model"></select>
               <span class="field-note" id="translation-note"></span>
             </div>
             <div class="field">
-              <label for="tts-provider">Voice provider</label>
-              <select id="tts-provider" name="tts_provider"></select>
-            </div>
-            <div class="field">
-              <label for="tts-model">Voice model</label>
+              <label for="tts-model">Voice</label>
               <select id="tts-model" name="tts_model"></select>
               <span class="field-note" id="tts-note"></span>
             </div>
@@ -621,13 +613,6 @@
                 <span class="option-hint" id="hint-separation">Dub over the real background, not a quiet original</span>
               </span>
             </label>
-            <label class="option" id="option-lipsync">
-              <input type="checkbox" id="enable-lip-sync">
-              <span>
-                <span class="option-name">Lip sync</span>
-                <span class="option-hint" id="hint-lipsync">No provider installed</span>
-              </span>
-            </label>
           </div>
 
           <button class="submit" id="submit-button" type="submit">
@@ -641,7 +626,7 @@
         <div class="panel-head">
           <div>
             <p class="panel-kicker">Live execution</p>
-            <h2>Thirteen-stage pipeline</h2>
+            <h2>Twelve-step pipeline</h2>
           </div>
           <span class="badge" id="status-badge">Ready</span>
         </div>
@@ -686,7 +671,6 @@
       { id: "align", name: "Align speech", tool: "Duration fitting", optional: true },
       { id: "separate", name: "Source separation", tool: "Demucs", optional: true },
       { id: "mix", name: "Mix and synchronize", tool: "FFmpeg timestamps" },
-      { id: "lipsync", name: "Lip sync", tool: "Optional provider", optional: true },
       { id: "render", name: "Render video", tool: "MP4 + subtitles" }
     ];
 
@@ -711,17 +695,14 @@
 
     const controls = {
       asr: {
-        provider: document.getElementById("asr-provider"),
         model: document.getElementById("asr-model"),
         note: document.getElementById("asr-note")
       },
       translation: {
-        provider: document.getElementById("translation-provider"),
         model: document.getElementById("translation-model"),
         note: document.getElementById("translation-note")
       },
       tts: {
-        provider: document.getElementById("tts-provider"),
         model: document.getElementById("tts-model"),
         note: document.getElementById("tts-note")
       }
@@ -730,8 +711,7 @@
       diarization: document.getElementById("enable-diarization"),
       voice_cloning: document.getElementById("enable-voice-cloning"),
       alignment: document.getElementById("enable-alignment"),
-      source_separation: document.getElementById("enable-source-separation"),
-      lip_sync: document.getElementById("enable-lip-sync")
+      source_separation: document.getElementById("enable-source-separation")
     };
 
     let capabilities = null;
@@ -847,31 +827,24 @@
       const fallback = (capabilities && capabilities.defaults || {})[task];
       const previous = keepModel || control.model.value || fallback || "";
 
-      const providers = [];
-      for (const model of models) {
-        if (!providers.some(entry => entry.id === model.group.id)) {
-          providers.push({ id: model.group.id, name: model.group.display_name });
-        }
-      }
-      const defaultProvider = (models.find(model => model.id === fallback) || {}).provider;
-      const wantedProvider = providers.some(entry => entry.id === control.provider.value)
-        ? control.provider.value
-        : (defaultProvider || (providers[0] || {}).id);
-
-      control.provider.innerHTML = "";
-      for (const provider of providers) {
-        control.provider.add(new Option(provider.name, provider.id));
-      }
-      control.provider.value = wantedProvider || "";
-      control.provider.disabled = providers.length === 0;
-
-      const forProvider = models.filter(model => model.provider === control.provider.value);
+      // The provider is an <optgroup> label rather than a second select:
+      // eleven of the seventeen providers register exactly one model, so their
+      // provider box was a dropdown with a single option. modelsOf() returns
+      // one provider's models together, so the groups come out contiguous.
       control.model.innerHTML = "";
-      for (const model of forProvider) {
-        control.model.add(new Option(model.display_name, model.id));
+      let group = null;
+      let groupedUnder = null;
+      for (const model of models) {
+        if (groupedUnder !== model.group.id) {
+          group = document.createElement("optgroup");
+          group.label = model.group.display_name;
+          control.model.add(group);
+          groupedUnder = model.group.id;
+        }
+        group.appendChild(new Option(model.display_name, model.id));
       }
-      if (forProvider.some(model => model.id === previous)) control.model.value = previous;
-      control.model.disabled = forProvider.length === 0;
+      if (models.some(model => model.id === previous)) control.model.value = previous;
+      control.model.disabled = models.length === 0;
 
       if (!models.length) {
         control.note.className = "field-note warn";
@@ -880,10 +853,10 @@
           : "";
       } else {
         control.note.className = "field-note";
-        const chosen = forProvider.find(model => model.id === control.model.value);
+        const chosen = models.find(model => model.id === control.model.value);
         control.note.textContent = chosen ? describe(chosen) : "";
       }
-      return forProvider.find(model => model.id === control.model.value) || null;
+      return models.find(model => model.id === control.model.value) || null;
     }
 
     // `forced` is the state a disabled box must hold: false for a feature this
@@ -928,13 +901,6 @@
           ? "Dub over the real background, not a quiet original"
           : "Demucs is not installed on this backend"
       );
-
-      const lipsync = modelsOf("lipsync").filter(model => model.available);
-      optionState(
-        "lip_sync",
-        lipsync.length > 0,
-        lipsync.length ? "Re-time the mouth to the dub" : "No provider installed"
-      );
     }
 
     function refreshAll() {
@@ -978,10 +944,6 @@
     }
 
     for (const task of Object.keys(controls)) {
-      controls[task].provider.addEventListener("change", () => {
-        controls[task].model.value = "";
-        refreshAll();
-      });
       controls[task].model.addEventListener("change", () => refreshAll());
     }
     sourceSelect.addEventListener("change", () => refreshAll());
@@ -1112,8 +1074,9 @@
       data.append("file", fileInput.files[0]);
       data.append("source_language", sourceSelect.value);
       data.append("target_language", targetSelect.value);
+      // A model id is enough: Registry.resolve() derives the provider from it,
+      // and sending both only creates a pair that can contradict each other.
       for (const [task, control] of Object.entries(controls)) {
-        if (control.provider.value) data.append(`${task}_provider`, control.provider.value);
         if (control.model.value) data.append(`${task}_model`, control.model.value);
       }
       // Send every flag explicitly: an unchecked box is absent from a form, and

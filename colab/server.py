@@ -11,7 +11,7 @@ Two routes into the same pipeline:
 
 * the stage endpoints (/transcribe, /translate, /synthesize, /diarize, /align)
   which n8n orchestrates and which any other application can reuse;
-* POST /jobs, which runs all twelve stages here and needs nothing but this URL.
+* POST /jobs, which runs all eleven stages here and needs nothing but this URL.
 """
 from __future__ import annotations
 

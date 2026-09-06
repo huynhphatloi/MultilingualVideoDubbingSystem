@@ -41,7 +41,7 @@ CONFIG = {
     "translation": {"provider": "nllb", "model": "nllb"},
     "tts": {"provider": "mms", "model": "mms", "voice_cloning": False},
     "features": {"diarization": False, "voice_cloning": False, "alignment": True,
-                 "source_separation": False, "lip_sync": False},
+                 "source_separation": False},
     "alignment_limits": {"min_speed": 0.75, "max_speed": 1.35, "tolerance": 0.05,
                          "allow_stretch": False},
 }
@@ -147,13 +147,12 @@ def test_the_whole_n8n_route_runs(service):
 
     results = {name: stage(client, name, job_id) for name in [
         "extract", "diarize", "transcribe", "merge_segments", "translate",
-        "voice_references", "synthesize", "align", "separate", "mix", "lipsync",
-        "render",
+        "voice_references", "synthesize", "align", "separate", "mix", "render",
     ]}
 
     # Optional stages skip themselves rather than failing the workflow, which is
     # what lets one n8n graph serve every configuration.
-    for optional in ("diarize", "voice_references", "separate", "lipsync"):
+    for optional in ("diarize", "voice_references", "separate"):
         assert results[optional]["status"] == "skipped", optional
     assert results["mix"]["mode"] == "voice-over"
 

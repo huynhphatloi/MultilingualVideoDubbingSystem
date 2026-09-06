@@ -103,7 +103,7 @@ class Slot:
 #: more than the memory it frees.
 SLOTS: Dict[str, Slot] = {
     task: Slot(task)
-    for task in ("asr", "translation", "tts", "diarization", "separation", "lipsync")
+    for task in ("asr", "translation", "tts", "diarization", "separation")
 }
 
 

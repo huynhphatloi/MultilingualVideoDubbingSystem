@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 from core.runtime import device, loaded
 from dubflow_core import languages as L
-from providers import asr, diarization, lipsync, separation, translation, tts
+from providers import asr, diarization, separation, translation, tts
 from providers.base import ModelSpec, Registry, TASKS, check_language_lists
 
 REGISTRIES: Dict[str, Registry] = {
@@ -21,7 +21,6 @@ REGISTRIES: Dict[str, Registry] = {
     "tts": tts.REGISTRY,
     "diarization": diarization.REGISTRY,
     "separation": separation.REGISTRY,
-    "lipsync": lipsync.REGISTRY,
 }
 
 DEFAULTS: Dict[str, Optional[str]] = {
@@ -30,7 +29,6 @@ DEFAULTS: Dict[str, Optional[str]] = {
     "tts": tts.DEFAULT_MODEL,
     "diarization": diarization.DEFAULT_MODEL,
     "separation": separation.DEFAULT_MODEL,
-    "lipsync": lipsync.DEFAULT_MODEL,
 }
 
 

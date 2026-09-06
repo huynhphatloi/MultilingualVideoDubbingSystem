@@ -35,7 +35,7 @@ def test_a_slot_holds_one_model_and_evicts_on_a_new_key():
 
 def test_every_task_has_its_own_slot():
     assert set(runtime.SLOTS) == {
-        "asr", "translation", "tts", "diarization", "separation", "lipsync"
+        "asr", "translation", "tts", "diarization", "separation"
     }
     runtime.slot("asr").get("x", lambda: object())
     assert runtime.loaded()["asr"] == "x"

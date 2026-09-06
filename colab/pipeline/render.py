@@ -11,8 +11,7 @@ NAME = "render"
 
 def run(job: dict, folder: Path) -> None:
     files = job["files"]
-    #: The lip-sync stage, when it runs, replaces the source video.
-    video = folder / (files.get("lipsync_video") or files["input"])
+    video = folder / files["input"]
     output = folder / f"dubbed_{job['config']['target_language']}.mp4"
     total = float(job["duration_seconds"])
     base = [

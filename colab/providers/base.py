@@ -18,7 +18,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from core.errors import InvalidRequest, MissingCredential, UnsupportedLanguage
 from core.runtime import installed
 
-TASKS = ("asr", "translation", "tts", "diarization", "separation", "lipsync")
+TASKS = ("asr", "translation", "tts", "diarization", "separation")
 
 
 @dataclass(frozen=True)

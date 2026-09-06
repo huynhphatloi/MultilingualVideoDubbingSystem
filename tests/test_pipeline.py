@@ -160,7 +160,7 @@ def test_the_default_pipeline_produces_a_video(tmp_path, monkeypatch, stub_model
     ]
     # The optional stages skipped themselves rather than failing.
     assert set(job["skipped_stages"]) == {
-        "diarize", "voice_references", "separate", "lipsync"
+        "diarize", "voice_references", "separate"
     }
 
     output = folder / job["files"]["output"]

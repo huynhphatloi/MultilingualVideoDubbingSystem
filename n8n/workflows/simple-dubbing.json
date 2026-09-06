@@ -413,21 +413,6 @@
                 ]
               },
               "requiredField": false
-            },
-            {
-              "fieldLabel": "Lip Sync",
-              "fieldType": "dropdown",
-              "fieldOptions": {
-                "values": [
-                  {
-                    "option": "Off - keep the original video"
-                  },
-                  {
-                    "option": "On - needs a lip-sync provider, which this build does not ship"
-                  }
-                ]
-              },
-              "requiredField": false
             }
           ]
         },
@@ -482,7 +467,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'large-v3 - best quality'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst flag = (label, fallback) => {\n  const word = firstWord(label, '').toLowerCase();\n  if (word === 'on') return 'true';\n  if (word === 'off') return 'false';\n  return fallback;\n};\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// Only the model fields the operator actually chose are sent. Anything left\n// blank falls through to the AI service's own default, so the form never has\n// to know what that default is.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  asr_model: firstWord(form.json['Speech Recognition Model'], ''),\n  translation_model: firstWord(form.json['Translation Model'], ''),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n  enable_diarization: flag(form.json['Speaker Diarization'], 'false'),\n  enable_alignment: flag(form.json['Duration Alignment'], 'true'),\n  enable_source_separation: flag(form.json['Source Separation'], 'false'),\n  enable_lip_sync: flag(form.json['Lip Sync'], 'false'),\n};\n\n// 'Automatic' means: let the AI service decide from the engine's own\n// reference_required flag, which is what omitting the field does.\nconst cloning = flag(form.json['Voice Cloning'], '');\nif (cloning) payload.enable_voice_cloning = cloning;\n\n// The legacy names are still accepted by the API; the new ones are clearer.\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
+        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'large-v3 - best quality'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst flag = (label, fallback) => {\n  const word = firstWord(label, '').toLowerCase();\n  if (word === 'on') return 'true';\n  if (word === 'off') return 'false';\n  return fallback;\n};\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// Only the model fields the operator actually chose are sent. Anything left\n// blank falls through to the AI service's own default, so the form never has\n// to know what that default is.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  asr_model: firstWord(form.json['Speech Recognition Model'], ''),\n  translation_model: firstWord(form.json['Translation Model'], ''),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n  enable_diarization: flag(form.json['Speaker Diarization'], 'false'),\n  enable_alignment: flag(form.json['Duration Alignment'], 'true'),\n  enable_source_separation: flag(form.json['Source Separation'], 'false'),\n};\n\n// 'Automatic' means: let the AI service decide from the engine's own\n// reference_required flag, which is what omitting the field does.\nconst cloning = flag(form.json['Voice Cloning'], '');\nif (cloning) payload.enable_voice_cloning = cloning;\n\n// The legacy names are still accepted by the API; the new ones are clearer.\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
       },
       "id": "0bd18971-d5c4-4f07-8131-f84f8a377002",
       "name": "Prepare Upload",
@@ -543,10 +528,6 @@
             {
               "name": "enable_source_separation",
               "value": "={{ $json.enable_source_separation || '' }}"
-            },
-            {
-              "name": "enable_lip_sync",
-              "value": "={{ $json.enable_lip_sync || '' }}"
             }
           ]
         },
@@ -788,28 +769,6 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://ai-service:8000/stages/lipsync",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id }) }}",
-        "options": {
-          "timeout": 7200000
-        }
-      },
-      "id": "stage-lipsync",
-      "name": "12. Lip Sync",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        520
-      ],
-      "notes": "Optional. No lip-sync provider ships with this build, so this reports skipped unless one is added.",
-      "notesInFlow": true
-    },
-    {
-      "parameters": {
-        "method": "POST",
         "url": "http://ai-service:8000/stages/render",
         "sendBody": true,
         "specifyBody": "json",
@@ -819,7 +778,7 @@
         }
       },
       "id": "stage-render",
-      "name": "13. Render Video",
+      "name": "12. Render Video",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -1149,25 +1108,14 @@
       "main": [
         [
           {
-            "node": "12. Lip Sync",
+            "node": "12. Render Video",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "12. Lip Sync": {
-      "main": [
-        [
-          {
-            "node": "13. Render Video",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "13. Render Video": {
+    "12. Render Video": {
       "main": [
         [
           {

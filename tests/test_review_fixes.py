@@ -45,7 +45,6 @@ class TestEmptyFormFields:
             "enable_voice_cloning": "",      # "Automatic"
             "enable_alignment": "true",
             "enable_source_separation": "false",
-            "enable_lip_sync": "false",
         })
         assert built.features.voice_cloning is True
         assert built.features.alignment is True
@@ -82,7 +81,7 @@ class TestModelResidency:
 
     def default_job(self, **features):  # noqa: ANN201
         base = {"diarization": False, "alignment": True, "voice_cloning": False,
-                "source_separation": False, "lip_sync": False}
+                "source_separation": False}
         base.update(features)
         return {"config": {"features": base}}
 
@@ -134,7 +133,7 @@ class TestModelResidency:
             "skipped_stages": [], "files": {}, "segments": [],
             "config": {"target_language": "vi", "features": {
                 "diarization": False, "alignment": True, "voice_cloning": False,
-                "source_separation": False, "lip_sync": False}},
+                "source_separation": False}},
             "request": {"target_language": "vi"},
         }
         (tmp_path / "eeeeeeeeeeee").mkdir()

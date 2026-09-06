@@ -23,7 +23,6 @@ def test_defaults_match_the_pre_refactor_pipeline():
         "voice_cloning": False,
         "alignment": True,
         "source_separation": False,
-        "lip_sync": False,
     }
 
 
@@ -120,11 +119,6 @@ def test_diarization_needs_an_installed_provider():
     assert failure.value.status_code == 503
 
 
-def test_lip_sync_says_no_provider_is_registered():
-    with pytest.raises(InvalidRequest) as failure:
-        build(enable_lip_sync="true")
-    assert "registers no lip-sync provider" in str(failure.value)
-
 
 def test_alignment_limits_are_validated_and_carried():
     built = build(min_speed="0.8", max_speed="1.5")
@@ -149,7 +143,7 @@ def test_public_shape_matches_the_documented_job_config():
     assert payload["translation"]["model"] == "nllb"
     assert payload["tts"]["voice_cloning"] is False
     assert set(payload["features"]) == {
-        "diarization", "voice_cloning", "alignment", "source_separation", "lip_sync"
+        "diarization", "voice_cloning", "alignment", "source_separation"
     }
 
 

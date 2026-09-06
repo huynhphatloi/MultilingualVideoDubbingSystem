@@ -96,7 +96,6 @@ STAGES = [
     "align",
     "separate",
     "mix",
-    "lipsync",
     "render",
 ]
 FINAL_STAGE = "render"
@@ -1046,33 +1045,11 @@ def mix(request: JobRequest) -> dict:
     }
 
 
-@app.post("/stages/lipsync")
-def lipsync(request: JobRequest) -> dict:
-    """Optional lip sync.
-
-    This route has no implementation on purpose. Lip sync rewrites the video,
-    and sending the whole file to the notebook and back would dwarf every other
-    transfer in this pipeline - the point of the n8n route is that only a 16 kHz
-    track crosses the tunnel. A job that wants lip sync should use the
-    notebook's own end-to-end `POST /jobs`, where the video is already there.
-    """
-    job = _load_job(request.job_id)
-    if not _features(job).get("lip_sync"):
-        return _skip(request.job_id, "lipsync", "lip sync is off for this job")
-    raise HTTPException(
-        501,
-        "This route does not run lip sync: the video would have to cross the "
-        "tunnel twice. Use the AI service's own POST /jobs for a lip-synced dub, "
-        "and note that no lip-sync provider ships with this build either - see "
-        "colab/providers/lipsync/registry.py.",
-    )
-
-
 @app.post("/stages/render")
 def render(request: JobRequest) -> dict:
     with _stage(request.job_id, "render") as (job, folder):
         files = job["files"]
-        video = folder / (files.get("lipsync_video") or files["input"])
+        video = folder / files["input"]
         audio = folder / files["final_audio"]
         subtitle = folder / files["subtitle"]
         target = job["config"]["target_language"]

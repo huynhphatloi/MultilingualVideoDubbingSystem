@@ -20,7 +20,7 @@ def client():  # noqa: ANN201
 def test_capabilities_is_the_source_of_truth(client):
     payload = client.get("/capabilities").json()
     assert payload["tasks"] == [
-        "asr", "translation", "tts", "diarization", "separation", "lipsync"
+        "asr", "translation", "tts", "diarization", "separation"
     ]
     assert payload["stages"][0] == "extract" and payload["stages"][-1] == "render"
     assert payload["defaults"]["asr"] == "small"

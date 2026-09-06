@@ -1,7 +1,7 @@
 # DubFlow — Multilingual Video Dubbing
 
 A model-agnostic video dubbing pipeline. Speech recognition, translation, speech
-generation, speaker diarization, source separation and lip sync are each a
+generation, speaker diarization and source separation are each a
 **provider** behind a capability, so any of them can be swapped from the web UI
 or the n8n form without changing the pipeline. All inference runs on a Google
 Colab GPU; nothing is downloaded onto the machine running the stack.
@@ -11,7 +11,7 @@ Colab GPU; nothing is downloaded onto the machine running the stack.
 | **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · Google Colab |
 | **Models** | 19 ASR · 3 translation · 13 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
-| **Tests** | 106, no GPU and no model download required |
+| **Tests** | 116, no GPU and no model download required |
 | **Status** | Reference implementation. Demo-grade security — see [Limitations](#limitations) |
 
 ---
@@ -27,6 +27,7 @@ Colab GPU; nothing is downloaded onto the machine running the stack.
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
+- [Future work](#future-work)
 - [Licensing and attribution](#licensing-and-attribution)
 
 ---
@@ -48,8 +49,7 @@ flowchart TD
     SY --> AL{{Duration alignment}}
     AL --> SP{{Source separation · Demucs}}
     SP --> MX[Mix · FFmpeg]
-    MX --> LS{{Lip sync}}
-    LS --> RD[Render MP4 + SRT · FFmpeg]
+    MX --> RD[Render MP4 + SRT · FFmpeg]
     RD --> OUT([Dubbed video])
 ```
 
@@ -113,7 +113,7 @@ make start
 | n8n workflow | <http://localhost:5678> |
 
 Upload a short clip — ten to twenty seconds is enough for a first run — and
-watch the thirteen stages execute.
+watch the eleven stages execute.
 
 ---
 
@@ -158,8 +158,7 @@ colab/                   AI service (runs on the Colab GPU)
                          openvoice, cosyvoice, vieneu
     diarization/         pyannote
     separation/          demucs
-    lipsync/             registry only — no provider ships, see the file
-  pipeline/              The twelve stages and the runner
+  pipeline/              The eleven stages and the runner
 ai-service/              Local FastAPI service: storage, FFmpeg, orchestration
 frontend/index.html      Single-file web UI, reads /capabilities
 n8n/workflows/           The visual pipeline
@@ -170,7 +169,7 @@ tests/                   106 tests, no GPU required
 ### Pipeline stages
 
 On the n8n route the FFmpeg stages run locally and only the model calls cross
-the tunnel. The notebook's own `POST /jobs` runs all thirteen in Colab.
+the tunnel. The notebook's own `POST /jobs` runs all eleven in Colab.
 
 | # | Stage | Runs on | Optional | Produces |
 |---|---|---|---|---|
@@ -184,8 +183,7 @@ the tunnel. The notebook's own `POST /jobs` runs all thirteen in Colab.
 | 8 | `align` | Local FFmpeg | ● | Each line fitted to its time window |
 | 9 | `separate` | AI service | ● | Background stem without the original speech |
 | 10 | `mix` | Local FFmpeg | | Dub track placed at timestamps, blended |
-| 11 | `lipsync` | — | ● | No provider ships with this build |
-| 12 | `render` | Local FFmpeg | | MP4 with audio and embedded subtitles |
+| 11 | `render` | Local FFmpeg | | MP4 with audio and embedded subtitles |
 
 ### One source of truth
 
@@ -255,13 +253,12 @@ Croatian, Serbian, Slovak, Slovenian, Armenian, Georgian, Nepali, Sinhala or
 Mongolian. Those combinations are rejected at job creation with a message naming
 a working alternative, rather than failing on a 404 from the Hub.
 
-### Diarization, separation, lip sync
+### Diarization and separation
 
 | Task | Model | Licence | Install |
 |---|---|---|---|
 | Diarization | `pyannote_3_1` | MIT, gated weights | `pyannote.audio` + `HF_TOKEN` |
 | Separation | `htdemucs`, `htdemucs_ft` | MIT | `demucs` |
-| Lip sync | none | — | see [`colab/providers/lipsync/registry.py`](colab/providers/lipsync/registry.py) |
 
 ---
 
@@ -278,7 +275,7 @@ INSTALL_EDGE = True          INSTALL_SENSEVOICE = False
 INSTALL_PIPER = False        INSTALL_PARAKEET = False
 INSTALL_COQUI = False        INSTALL_DIARIZATION = False
 INSTALL_F5 = False           INSTALL_DEMUCS = False
-INSTALL_CHATTERBOX = False   INSTALL_LIPSYNC = False
+INSTALL_CHATTERBOX = False
 INSTALL_KOKORO = False
 INSTALL_OPENVOICE = False
 INSTALL_COSYVOICE = False
@@ -437,7 +434,7 @@ curl -OJ "$COLAB_API_URL/jobs/<job_id>/download"
 | `GET` | `/health`, `/backends`, `/languages` | Status and configuration |
 | `POST` | `/jobs/upload` | Store a video and settle its configuration |
 | `POST` | `/jobs/{id}/start` | Hand the job to n8n |
-| `POST` | `/stages/{stage}` | Run one stage; the twelve names are in the table above |
+| `POST` | `/stages/{stage}` | Run one stage; the eleven names are in the table above |
 | `GET` | `/jobs/{id}` | The full job manifest |
 | `GET` | `/jobs/{id}/download`, `/subtitle` | Results |
 
@@ -476,7 +473,7 @@ Nothing was removed. The old parameters still work and map onto the new ones.
 | `translation_engine=nllb` | `translation_model=nllb` | Still accepted |
 | `tts_engine=mms` | `tts_model=mms` | Still accepted |
 | `GET /health` → `whisper_models`, `tts_engines` | `GET /capabilities` | The old keys are still published |
-| Six-stage progress | Twelve stages, optional ones skip | `progress` counts planned stages only |
+| Six-stage progress | Eleven stages, optional ones skip | `progress` counts planned stages only |
 
 Three behaviours changed deliberately:
 
@@ -549,8 +546,6 @@ dependency changes require a rebuild.
 
 ## Limitations
 
-- No lip-sync provider ships. The stage, the flag and the abstraction exist; the
-  registry is empty on purpose, and the file explains what adding one involves.
 - Source separation sends the full soundtrack to the notebook and downloads a
   stem — the largest transfer in the pipeline.
 - Segments are never split at a speaker change. An utterance where two people
@@ -567,6 +562,35 @@ dependency changes require a rebuild.
   16 clips, so several concurrent multi-speaker jobs can evict each other's
   samples. The notebook's own `POST /jobs` route keeps references inside the job
   folder and is unaffected.
+
+---
+
+## Future work
+
+**Lip sync.** Re-timing the speaker's mouth to the dubbed audio was scoped out
+of this build and removed rather than left as an empty abstraction: a stage that
+never runs, a registry with no entries and a permanently disabled checkbox cost
+more to explain than they were worth.
+
+Adding it later is a contained change, because nothing else in the pipeline
+depends on the video between `mix` and `render`:
+
+1. A `lipsync` registry under `colab/providers/`, following the shape of
+   `separation/` — a `ProviderSpec`, one `ModelSpec` per checkpoint, and a
+   module implementing `synchronise(video, audio, output)`.
+2. A `pipeline/lipsync.py` stage with an `enabled(job)`, inserted between `mix`
+   and `render`, plus its slot in `STAGE_SLOTS`.
+3. A `lip_sync` flag on `Features`, and `render` reading the lip-synced video in
+   place of the original.
+
+The n8n route needs one further decision that the notebook route does not: lip
+sync rewrites the video, so the whole file would have to cross the tunnel twice.
+Either the stage stays notebook-only, or the local service gains a way to run it
+without shipping the video.
+
+**Candidate models.** Wav2Lip (non-commercial), Retalker and LatentSync are the
+usual starting points; each keeps its own licence, which would be recorded in
+the registry alongside the rest.
 
 ---
 

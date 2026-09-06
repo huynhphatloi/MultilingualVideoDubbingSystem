@@ -13,7 +13,7 @@ def test_no_internal_inconsistencies(registry):
 
 def test_every_task_has_a_registry(registry):
     assert set(registry.REGISTRIES) == {
-        "asr", "translation", "tts", "diarization", "separation", "lipsync"
+        "asr", "translation", "tts", "diarization", "separation"
     }
 
 
@@ -138,7 +138,3 @@ def test_language_rejection_names_a_working_alternative(registry):
     assert "does not support target language 'vi'" in message
     assert "en, es, fr" in message
 
-
-def test_lipsync_registers_nothing_and_says_so(registry):
-    assert registry.registry("lipsync").ids() == []
-    assert registry.capabilities()["providers"]["lipsync"] == []
