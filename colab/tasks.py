@@ -5,7 +5,7 @@ import threading
 import traceback
 import uuid
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 from core.errors import ServiceError
 
@@ -115,11 +115,6 @@ def public(task_id: str) -> Dict:
         payload["error"] = task["error"]
         payload["status_code"] = task["status_code"]
     return payload
-
-
-def running() -> int:
-    with _lock:
-        return sum(1 for task in _tasks.values() if task["status"] in (QUEUED, RUNNING))
 
 
 def reset() -> None:

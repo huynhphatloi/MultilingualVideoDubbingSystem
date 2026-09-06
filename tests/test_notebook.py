@@ -93,14 +93,14 @@ class TestEveryCell:
 class TestLaunchCellStatics:
     def test_it_stops_the_previous_server_before_importing(self):
         source = launch_cell()
-        assert "api_server.should_exit = True" in source
-        assert "api_thread.join" in source
+        assert "_previous_server.should_exit = True" in source
+        assert "_previous_thread.join" in source
         assert source.index("should_exit") < source.index("import server")
 
     def test_it_purges_the_project_modules(self):
         source = launch_cell()
         assert "del sys.modules[" in source
-        for module in ("server", "jobs", "pipeline", "providers", "core", "dubflow_core"):
+        for module in ("server", "providers", "core", "dubflow_core"):
             assert f'"{module}"' in source
 
     def test_it_sets_up_sys_path_before_importing_anything_of_ours(self):
@@ -117,7 +117,7 @@ class TestLaunchCellStatics:
         assert "server.app.version" in launch_cell()
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="pipeline import needs FFmpeg tooling")
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="the API needs FFmpeg tooling")
 def test_the_cell_reloads_a_pulled_checkout_without_a_restart(tmp_path):
     shutil.copytree(ROOT / "colab", tmp_path / "colab")
     shutil.copytree(ROOT / "dubflow_core", tmp_path / "dubflow_core")
@@ -137,8 +137,6 @@ def test_the_cell_reloads_a_pulled_checkout_without_a_restart(tmp_path):
         PORT = {port}
         WHISPER_MODEL = "small"
         HF_TOKEN = ""
-        os.environ["JOBS_ROOT"] = {jobs!r}
-
         def version():
             with urllib.request.urlopen("http://127.0.0.1:%d/health" % PORT) as reply:
                 return json.load(reply).get("version")
@@ -158,7 +156,6 @@ def test_the_cell_reloads_a_pulled_checkout_without_a_restart(tmp_path):
         """
     ).format(
         colab=str(tmp_path / "colab"),
-        jobs=str(tmp_path / "jobs"),
         server=str(tmp_path / "colab" / "server.py"),
         cell=launch_cell(),
         port=PORT,

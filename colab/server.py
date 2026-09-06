@@ -7,6 +7,7 @@ import secrets
 import shutil
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import providers  # noqa: E402
 from core import config as job_config, feature_flags  # noqa: E402
 from core.errors import InvalidRequest, ServiceError  # noqa: E402
-from core.media import Scratch, duration, normalise_speech, sample_rate  # noqa: E402
+from core.media import Scratch, duration, sample_rate  # noqa: E402
 from core.runtime import device, loaded, release_all  # noqa: E402
 from dubflow_core import languages as L  # noqa: E402
 from dubflow_core import segments as segment_tools  # noqa: E402
@@ -34,15 +35,16 @@ from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from providers.asr import windows_from_turns  # noqa: E402
 from providers.tts import SpeechRequest  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
+from starlette.background import BackgroundTask  # noqa: E402
 
-import jobs  # noqa: E402
-import pipeline  # noqa: E402
 import tasks  # noqa: E402
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", providers.DEFAULTS["asr"])
+MODEL_LOCK = threading.RLock()
 
 app = FastAPI(title="DubFlow Colab AI", version="4.0")
+
 
 @app.exception_handler(ServiceError)
 def _service_error(_: Request, exc: ServiceError) -> JSONResponse:
@@ -97,48 +99,33 @@ def download_task(task_id: str, authorization: Optional[str] = Header(None)):  #
 @app.get("/capabilities")
 def capabilities(authorization: Optional[str] = Header(None)) -> Dict:
     """Return model metadata and runtime availability."""
-    if AUTH_TOKEN and authorization:
-        _authorize(authorization)
+    _authorize(authorization)
     payload = providers.capabilities()
-    payload["stages"] = pipeline.STAGE_NAMES
-    payload["optional_stages"] = pipeline.OPTIONAL_STAGES
     payload["version"] = app.version
     return payload
 
 
 @app.get("/health")
 def health() -> Dict:
-    asr = providers.registry("asr")
-    translation = providers.registry("translation")
-    tts = providers.registry("tts")
     return {
         "status": "ready",
         "version": app.version,
         "device": device(),
-        "services": ["transcription", "translation", "speech", "diarization", "pipeline"],
+        "services": [
+            "transcription",
+            "translation",
+            "speech",
+            "diarization",
+            "separation",
+        ],
         "loaded": loaded(),
         "feature_flags": feature_flags.public(),
-        "whisper_model": WHISPER_MODEL,
-        "whisper_models": sorted(
-            spec.id for spec in asr.for_provider("faster_whisper")
-        ),
-        "translation_model": translation.get("nllb").repo_id,
-        "translation_engines": sorted(spec.id for spec in translation.models()),
-        "tts_engines": {
-            spec.id: {
-                "available": spec.available(),
-                "package": spec.optional_package,
-            }
-            for spec in tts.models()
-        },
-        "asr_models": [spec.id for spec in asr.models() if spec.available()],
-        "capabilities_url": "/capabilities",
-        "languages": L.listing(),
     }
 
 
 @app.get("/languages")
-def languages() -> Dict:
+def languages(authorization: Optional[str] = Header(None)) -> Dict:
+    _authorize(authorization)
     return {"languages": L.listing()}
 
 
@@ -156,13 +143,21 @@ def diarize(
     spec = providers.find("diarization", provider or None,
                           model or providers.DEFAULTS["diarization"])
     providers.registry("diarization").require_available(spec)
+    try:
+        lower = int(min_speakers) if min_speakers.strip() else None
+        upper = int(max_speakers) if max_speakers.strip() else None
+    except ValueError as exc:
+        raise InvalidRequest("min_speakers and max_speakers must be whole numbers") from exc
+    for name, count in (("min_speakers", lower), ("max_speakers", upper)):
+        if count is not None and not 1 <= count <= 20:
+            raise InvalidRequest(f"{name} must be between 1 and 20")
+    if lower is not None and upper is not None and lower > upper:
+        raise InvalidRequest("min_speakers cannot be greater than max_speakers")
     path = _persist(audio)
-    lower = int(min_speakers) if min_speakers.strip() else None
-    upper = int(max_speakers) if max_speakers.strip() else None
 
     def work() -> Dict:
         try:
-            with jobs.lock:
+            with MODEL_LOCK:
                 engine = providers.diarization.load(spec)
                 turns = engine.diarize(path, min_speakers=lower, max_speakers=upper)
             return {
@@ -204,7 +199,7 @@ def transcribe(
 
     def work() -> Dict:
         try:
-            with jobs.lock:
+            with MODEL_LOCK:
                 engine = providers.asr.load(spec, source)
                 windows = (
                     windows_from_turns(parsed)
@@ -226,7 +221,6 @@ def transcribe(
                 "speakers": segment_tools.speakers_of(segments),
                 "asr_provider": spec.provider,
                 "asr_model": spec.id,
-                "whisper_model": spec.id,
             }
         finally:
             path.unlink(missing_ok=True)
@@ -255,7 +249,6 @@ class TranslationRequest(BaseModel):
     source_language: str
     target_language: str
     texts: List[str]
-    engine: str = ""
     provider: str = ""
     model: str = ""
     async_mode: bool = False
@@ -272,14 +265,13 @@ def translate(
     spec = providers.find(
         "translation",
         request.provider or None,
-        request.model or request.engine or providers.DEFAULTS["translation"],
+        request.model or providers.DEFAULTS["translation"],
     )
     if not request.texts or len(request.texts) > 500:
         raise InvalidRequest("texts must contain 1 to 500 items")
     if source == target:
         return {
             "translations": request.texts,
-            "translation_engine": spec.id,
             "translation_model": spec.id,
             "skipped": True,
         }
@@ -289,14 +281,13 @@ def translate(
     texts = list(request.texts)
 
     def work() -> Dict:
-        with jobs.lock:
+        with MODEL_LOCK:
             engine = providers.translation.load(spec)
             translations = engine.translate(texts, source, target)
         if len(translations) != len(texts):
             raise ServiceError("The translation model returned the wrong number of rows")
         return {
             "translations": [text.strip() for text in translations],
-            "translation_engine": spec.id,
             "translation_model": spec.id,
             "translation_provider": spec.provider,
             "skipped": False,
@@ -310,7 +301,6 @@ def synthesize(
     text: str = Form(...),
     language: str = Form("vi"),
     speed: float = Form(1.0),
-    engine: str = Form(""),
     provider: str = Form(""),
     model: str = Form(""),
     speaker_id: str = Form(""),
@@ -326,7 +316,7 @@ def synthesize(
             "DUBFLOW_MULTI_VOICE=true before requesting it."
         )
     default_model = "edge" if requested_multi_voice else providers.DEFAULTS["tts"]
-    spec = providers.find("tts", provider or None, model or engine or default_model)
+    spec = providers.find("tts", provider or None, model or default_model)
     if requested_multi_voice and not spec.supports_multispeaker:
         raise InvalidRequest(
             "Multi-voice mode requires Edge TTS. Restart without "
@@ -342,7 +332,7 @@ def synthesize(
         raise InvalidRequest("Speed must be between 0.5 and 2.0")
 
     with Scratch(".wav") as output:
-        with jobs.lock:
+        with MODEL_LOCK:
             engine_instance = providers.tts.load(spec, target)
             engine_instance.synthesize(
                 SpeechRequest(
@@ -362,7 +352,6 @@ def synthesize(
 
     headers = {
         "X-TTS-Model": engine_instance.name,
-        "X-TTS-Engine": spec.id,
         "X-TTS-Provider": spec.provider,
         "X-TTS-Sample-Rate": str(rate),
         "X-TTS-Duration": f"{length:.3f}",
@@ -401,10 +390,11 @@ def separate(
         try:
             source = workdir / f"input{upload.suffix}"
             shutil.copyfile(upload, source)
-            with jobs.lock:
+            with MODEL_LOCK:
                 engine = providers.separation.load(spec)
                 stems = engine.separate(source, workdir)
-            kept = Path(tempfile.mkdtemp(prefix="dubflow-stem-")) / f"{stem}.wav"
+            with tempfile.NamedTemporaryFile(suffix=f"-{stem}.wav", delete=False) as handle:
+                kept = Path(handle.name)
             shutil.move(str(stems[stem]), kept)
             return {"file": str(kept), "media_type": "audio/wav", "headers": headers}
         finally:
@@ -415,7 +405,12 @@ def separate(
         state = tasks.submit(work, f"separate:{spec.id}")
         return JSONResponse(status_code=202, content=state)
     produced = work()
-    return FileResponse(produced["file"], media_type="audio/wav", headers=headers)
+    return FileResponse(
+        produced["file"],
+        media_type="audio/wav",
+        headers=headers,
+        background=BackgroundTask(Path(produced["file"]).unlink, missing_ok=True),
+    )
 
 
 class AlignmentRequest(BaseModel):
@@ -458,86 +453,9 @@ def validate(request: Dict[str, Any], authorization: Optional[str] = Header(None
     return {"valid": True, "config": job_config.build(request).public()}
 
 
-@app.post("/jobs", status_code=202)
-async def create_job(
-    request: Request,
-    video: UploadFile = File(...),
-    authorization: Optional[str] = Header(None),
-) -> Dict:
-    """Queue a complete dubbing job."""
-    _authorize(authorization)
-    form = await request.form()
-    values = {
-        name: value for name, value in form.items()
-        if name != "video" and isinstance(value, str)
-    }
-    config = job_config.build(values)
-
-    def save(target: Path) -> None:
-        with target.open("wb") as handle:
-            shutil.copyfileobj(video.file, handle, length=8 * 1024 * 1024)
-
-    job = jobs.create(video.filename or "input.mp4", values, config.public(), save)
-    ahead = jobs.enqueue(job["job_id"])
-    return {**jobs.public(job), "queued_ahead": ahead}
-
-
-@app.get("/jobs")
-def list_jobs(authorization: Optional[str] = Header(None)) -> Dict:
-    _authorize(authorization)
-    return {"jobs": jobs.listing(), "queued": jobs.queued(), "limit": jobs.LIMIT}
-
-
-@app.get("/jobs/{job_id}")
-def get_job(job_id: str, authorization: Optional[str] = Header(None)) -> Dict:
-    _authorize(authorization)
-    return jobs.public(jobs.read(job_id))
-
-
-@app.get("/jobs/{job_id}/segments")
-def get_segments(job_id: str, authorization: Optional[str] = Header(None)) -> Dict:
-    _authorize(authorization)
-    job = jobs.read(job_id)
-    return {
-        "job_id": job_id,
-        "segments": job.get("segments", []),
-        "turns": job.get("turns", []),
-    }
-
-
-@app.get("/jobs/{job_id}/download")
-def download_job(job_id: str, authorization: Optional[str] = Header(None)):  # noqa: ANN201
-    _authorize(authorization)
-    job = jobs.read(job_id)
-    name = job.get("files", {}).get("output")
-    if not name:
-        raise ServiceError(
-            f"Job '{job_id}' is {job['status']}, the video is not ready", status_code=409
-        )
-    return FileResponse(jobs.directory(job_id) / name, media_type="video/mp4", filename=name)
-
-
-@app.get("/jobs/{job_id}/subtitle")
-def download_subtitle(job_id: str, authorization: Optional[str] = Header(None)):  # noqa: ANN201
-    _authorize(authorization)
-    job = jobs.read(job_id)
-    name = job.get("files", {}).get("subtitle")
-    if not name:
-        raise ServiceError("Subtitles are not ready", status_code=409)
-    return FileResponse(
-        jobs.directory(job_id) / name, media_type="application/x-subrip", filename=name
-    )
-
-
-@app.delete("/jobs/{job_id}")
-def delete_job(job_id: str, authorization: Optional[str] = Header(None)) -> Dict:
-    _authorize(authorization)
-    jobs.delete(job_id)
-    return {"job_id": job_id, "deleted": True}
-
-
 @app.post("/unload")
 def unload(authorization: Optional[str] = Header(None)) -> Dict:
     _authorize(authorization)
-    release_all()
+    with MODEL_LOCK:
+        release_all()
     return {"loaded": loaded()}

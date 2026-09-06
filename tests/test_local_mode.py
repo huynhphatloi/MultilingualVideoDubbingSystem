@@ -43,7 +43,7 @@ def test_health_reports_when_models_are_local(monkeypatch):
     payload = fastapi_testclient.TestClient(app.app).get("/health").json()
 
     assert payload["ai_backend"] == "local"
-    assert payload["local_models"] is True
+    assert payload["ai_backend_url"] == "http://local-ai:8000"
 
 
 def test_an_outdated_local_backend_names_the_local_rebuild(monkeypatch):

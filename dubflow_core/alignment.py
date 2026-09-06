@@ -22,9 +22,6 @@ class Plan(NamedTuple):
     overflow: float
 
 
-STATUSES = ("fits", "aligned", "clamped", "stretched", "unmeasured")
-
-
 def window_for(
     start: float,
     end: float,

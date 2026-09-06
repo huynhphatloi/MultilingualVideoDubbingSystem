@@ -115,14 +115,6 @@ def check_local_api() -> list:
             )
     if "from dubflow_core import languages" not in source:
         problems.append("ai-service/app.py no longer imports the shared language table")
-    stages = local_api_stages()
-    import pipeline  # noqa: PLC0415 - imported here so the script stays light
-
-    if stages != pipeline.STAGE_NAMES:
-        problems.append(
-            f"local API stages {stages} differ from the Colab pipeline "
-            f"{pipeline.STAGE_NAMES}"
-        )
     return problems
 
 

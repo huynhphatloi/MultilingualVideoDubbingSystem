@@ -136,7 +136,7 @@ def stage(client, name, job_id):  # noqa: ANN001, ANN201
 
 @ffmpeg
 def test_the_whole_n8n_route_runs(service):
-    client, calls, tmp_path = service
+    client, _, tmp_path = service
     job_id = upload(client, tmp_path)
 
     results = {name: stage(client, name, job_id) for name in [
@@ -284,7 +284,7 @@ def test_capabilities_degrades_when_no_backend_answers(monkeypatch):
 
 
 def test_rejected_containers(service):
-    client, _, tmp_path = service
+    client, _, _ = service
     response = client.post(
         "/jobs/upload",
         files={"file": ("clip.avi", b"not a video", "video/x-msvideo")},
@@ -368,9 +368,7 @@ def test_deleting_a_job_removes_it_and_its_files(service):
 
 
 @ffmpeg
-def test_a_finished_stage_is_reused_instead_of_re_run(service, monkeypatch):
-    import app
-
+def test_a_finished_stage_is_reused_instead_of_re_run(service):
     client, calls, tmp_path = service
     job_id = upload(client, tmp_path)
     stage(client, "extract", job_id)

@@ -21,7 +21,6 @@ def test_capabilities_is_the_source_of_truth(client):
     assert payload["tasks"] == [
         "asr", "translation", "tts", "diarization", "separation"
     ]
-    assert payload["stages"][0] == "extract" and payload["stages"][-1] == "render"
     assert payload["defaults"]["asr"] == "small"
     assert payload["feature_flags"]["multi_voice"] is False
     asr = {
@@ -33,16 +32,17 @@ def test_capabilities_is_the_source_of_truth(client):
     assert asr["tiny.en"]["languages"] == ["en"]
 
 
-def test_health_keeps_the_keys_the_previous_version_published(client):
+def test_health_reports_runtime_state(client):
     payload = client.get("/health").json()
     assert payload["status"] == "ready"
-    assert set(payload["whisper_models"]) >= {"small", "large-v3", "large-v3-turbo"}
-    assert set(payload["translation_engines"]) >= {"nllb", "seamless"}
-    engines = payload["tts_engines"]
-    assert {"mms", "edge"} <= set(engines)
-    assert engines["mms"]["available"] is True
+    assert payload["version"] == "4.0"
+    assert set(payload["services"]) == {
+        "transcription", "translation", "speech", "diarization", "separation"
+    }
     assert payload["feature_flags"]["multi_voice"] is False
-    assert payload["languages"][0]["code"]
+    assert set(payload["loaded"]) == {
+        "asr", "translation", "tts", "diarization", "separation"
+    }
 
 
 def test_languages_endpoint(client):
@@ -50,10 +50,10 @@ def test_languages_endpoint(client):
     assert {"en", "vi", "ja"} <= codes
 
 
-def test_validate_accepts_the_old_parameter_names(client):
+def test_validate_accepts_model_choices(client):
     response = client.post("/validate", json={
-        "target_language": "vi", "model": "large-v3", "translation_engine": "nllb",
-        "tts_engine": "mms",
+        "target_language": "vi", "asr_model": "large-v3",
+        "translation_model": "nllb", "tts_model": "mms",
     })
     assert response.status_code == 200
     config = response.json()["config"]
@@ -76,7 +76,7 @@ def test_translate_skips_when_the_languages_match(client):
     payload = response.json()
     assert payload["translations"] == ["xin chao"]
     assert payload["skipped"] is True
-    assert payload["translation_engine"] == "nllb"
+    assert payload["translation_model"] == "nllb"
 
 
 def test_translate_rejects_an_empty_batch(client):
@@ -119,14 +119,9 @@ def test_transcribe_rejects_malformed_turns(client):
     assert response.status_code == 400
 
 
-def test_unknown_job_ids(client):
-    assert client.get("/jobs/aaaaaaaaaaaa").status_code == 404
-    assert client.get("/jobs/short").status_code == 400
-
-
 def test_synthesize_refuses_a_language_the_engine_cannot_speak(client):
     response = client.post("/synthesize", data={
-        "text": "hello", "language": "ja", "engine": "mms"
+        "text": "hello", "language": "ja", "model": "mms"
     })
     assert response.status_code == 400
     assert "does not support target language 'ja'" in response.json()["detail"]
@@ -144,48 +139,8 @@ def test_authentication_is_still_enforced_when_a_token_is_set(client, monkeypatc
     import server
 
     monkeypatch.setattr(server, "AUTH_TOKEN", "secret")
-    assert client.get("/jobs").status_code == 401
+    assert client.get("/tasks/missing").status_code == 401
     assert client.get(
-        "/jobs", headers={"Authorization": "Bearer secret"}
-    ).status_code == 200
+        "/tasks/missing", headers={"Authorization": "Bearer secret"}
+    ).status_code == 404
     assert client.get("/health").status_code == 200
-
-
-def test_creating_a_job_reads_both_the_old_and_new_form_fields(client, monkeypatch, tmp_path):
-    import jobs
-
-    monkeypatch.setattr(jobs, "ROOT", tmp_path)
-    monkeypatch.setattr(jobs, "enqueue", lambda job_id: 0)
-
-    response = client.post(
-        "/jobs",
-        files={"video": ("clip.mp4", b"not really a video", "video/mp4")},
-        data={
-            "target_language": "vi",
-            "source_language": "en",
-            "model": "large-v3-turbo",
-            "translation_engine": "nllb",
-            "tts_engine": "mms",
-            "enable_alignment": "false",
-        },
-    )
-    assert response.status_code == 202, response.text
-    payload = response.json()
-    assert payload["status"] == "queued"
-    assert payload["whisper_model"] == "large-v3-turbo"
-    assert payload["config"]["features"]["alignment"] is False
-    assert payload["progress"] == "0/7"
-    assert client.get(f"/jobs/{payload['job_id']}").status_code == 200
-
-
-def test_creating_a_job_refuses_an_unsupported_container(client, monkeypatch, tmp_path):
-    import jobs
-
-    monkeypatch.setattr(jobs, "ROOT", tmp_path)
-    response = client.post(
-        "/jobs",
-        files={"video": ("clip.avi", b"x", "video/x-msvideo")},
-        data={"target_language": "vi"},
-    )
-    assert response.status_code == 400
-    assert "Unsupported video container" in response.json()["detail"]

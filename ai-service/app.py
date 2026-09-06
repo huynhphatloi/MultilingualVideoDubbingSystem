@@ -33,8 +33,6 @@ from dubflow_core import segments as segment_tools  # noqa: E402
 ROOT = Path(os.getenv("DATA_ROOT", APP_DIR.parent / "data/jobs"))
 ROOT.mkdir(parents=True, exist_ok=True)
 
-COLAB_API_URL = os.getenv("COLAB_API_URL", "").rstrip("/")
-COLAB_API_TOKEN = os.getenv("COLAB_API_TOKEN", "")
 COLAB_API_TIMEOUT = float(os.getenv("COLAB_API_TIMEOUT", "1800"))
 AI_BACKENDS = [
     name.strip().lower()
@@ -60,9 +58,6 @@ LANGUAGES = {code: row.name for code, row in L.LANGUAGES.items()}
 
 _JOB_ID = re.compile(r"^[a-f0-9]{12}$")
 _ALLOWED_VIDEO = {".mp4", ".mkv", ".mov", ".webm", ".m4v"}
-_REFERENCE_SECONDS = 12.0
-_REFERENCE_MINIMUM = 1.0
-_MAX_REFERENCE_PIECE = 8.0
 
 MODERN_ENDPOINTS = ("/capabilities", "/validate", "/diarize", "/separate", "/align")
 MIN_BACKEND_VERSION = "4.0"
@@ -453,8 +448,6 @@ def health() -> dict:
         "stages": STAGES,
         "ai_backend": backend[0] if backend else None,
         "ai_backend_url": backend[1] if backend else None,
-        "colab_configured": bool(COLAB_API_URL),
-        "local_models": bool(backend) and backend[0] == "local",
     }
 
 
@@ -554,9 +547,6 @@ async def upload_video(request: Request, file: UploadFile = File(...)) -> dict:
         "request": values,
         "source_language": None if source in {None, "auto"} else source,
         "target_language": config.get("target_language"),
-        "whisper_model": (config.get("asr") or {}).get("model"),
-        "translation_engine": (config.get("translation") or {}).get("model"),
-        "tts_engine": (config.get("tts") or {}).get("model"),
         "files": {"input": source_path.name},
         "segments": [],
     }
@@ -569,9 +559,6 @@ async def upload_video(request: Request, file: UploadFile = File(...)) -> dict:
         "status": "completed",
         "config": config,
         "target_language": job["target_language"],
-        "whisper_model": job["whisper_model"],
-        "translation_engine": job["translation_engine"],
-        "tts_engine": job["tts_engine"],
     }
 
 
@@ -682,7 +669,6 @@ def transcribe(request: JobRequest) -> dict:
         "status": "completed",
         "source_language": job["source_language"],
         "asr_model": job.get("asr_model"),
-        "whisper_model": job.get("asr_model"),
         "segment_count": len(job["segments"]),
     }
 
@@ -752,7 +738,7 @@ def translate(request: JobRequest) -> dict:
         "status": "completed",
         "source_language": source,
         "target_language": target,
-        "translation_engine": choice.get("model"),
+        "translation_model": choice.get("model"),
         "skipped_translation": source == target,
         "segment_count": len(job["segments"]),
     }
@@ -811,7 +797,7 @@ def synthesize(request: JobRequest) -> dict:
         "stage": "synthesize",
         "status": "completed",
         "generated_segments": generated,
-        "requested_engine": (job["config"].get("tts") or {}).get("model"),
+        "tts_model": (job["config"].get("tts") or {}).get("model"),
         "provider": job["tts_provider"],
         "models_used": job.get("models_used"),
         "speaker_voice_map": job.get("speaker_voice_map"),

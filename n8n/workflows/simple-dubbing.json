@@ -504,7 +504,7 @@
         920,
         300
       ],
-      "notes": "The chosen TTS model on the AI backend, one call per segment with that speaker's reference.",
+      "notes": "The chosen TTS model on the AI backend, one call per segment.",
       "notesInFlow": true
     },
     {
@@ -650,14 +650,14 @@
             },
             {
               "id": "c44192f2-a601-4a2c-8572-e27800000009",
-              "name": "translation_engine",
-              "value": "={{ $('6. Translate').first().json.translation_engine }}",
+              "name": "translation_model",
+              "value": "={{ $('6. Translate').first().json.translation_model }}",
               "type": "string"
             },
             {
               "id": "c44192f2-a601-4a2c-8572-e27800000010",
-              "name": "voice_engine",
-              "value": "={{ $('7. Generate Voice').first().json.requested_engine }}",
+              "name": "tts_model",
+              "value": "={{ $('7. Generate Voice').first().json.tts_model }}",
               "type": "string"
             },
             {
@@ -739,7 +739,7 @@
       "parameters": {
         "operation": "completion",
         "respondWith": "showText",
-        "responseText": "=<h2>Your dubbed video is ready</h2>\n<p>Job <code>{{ $json.job_id }}</code> &mdash; {{ $json.source_language }} to {{ $json.target_language }}, {{ $json.segments }} segments, speakers: {{ $json.speakers || 'SPEAKER_00' }}.</p>\n<ul>\n<li>Recognised with <b>{{ $json.asr_model }}</b></li>\n<li>Translated with <b>{{ $json.translation_engine }}</b></li>\n<li>Voiced by <b>{{ $json.voice_used || $json.voice_engine }}</b></li>\n<li>Mixed as <b>{{ $json.mix_mode }}</b>, alignment {{ $json.alignment }}</li>\n</ul>\n<ul>\n<li><a href=\"{{ $json.download_video }}\" target=\"_blank\" rel=\"noopener\">Download the dubbed video (MP4, subtitles included)</a></li>\n<li><a href=\"{{ $json.download_subtitle }}\" target=\"_blank\" rel=\"noopener\">Download the translated subtitles (SRT)</a></li>\n</ul>\n<p>Both links keep working while the stack is up. The job folder is <code>data/jobs/{{ $json.job_id }}</code>.</p>",
+        "responseText": "=<h2>Your dubbed video is ready</h2>\n<p>Job <code>{{ $json.job_id }}</code> &mdash; {{ $json.source_language }} to {{ $json.target_language }}, {{ $json.segments }} segments, speakers: {{ $json.speakers || 'SPEAKER_00' }}.</p>\n<ul>\n<li>Recognised with <b>{{ $json.asr_model }}</b></li>\n<li>Translated with <b>{{ $json.translation_model }}</b></li>\n<li>Voiced by <b>{{ $json.voice_used || $json.tts_model }}</b></li>\n<li>Mixed as <b>{{ $json.mix_mode }}</b>, alignment {{ $json.alignment }}</li>\n</ul>\n<ul>\n<li><a href=\"{{ $json.download_video }}\" target=\"_blank\" rel=\"noopener\">Download the dubbed video (MP4, subtitles included)</a></li>\n<li><a href=\"{{ $json.download_subtitle }}\" target=\"_blank\" rel=\"noopener\">Download the translated subtitles (SRT)</a></li>\n</ul>\n<p>Both links keep working while the stack is up. The job folder is <code>data/jobs/{{ $json.job_id }}</code>.</p>",
         "limitWaitTime": false,
         "options": {}
       },

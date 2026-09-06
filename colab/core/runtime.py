@@ -7,8 +7,6 @@ import os
 import threading
 from typing import Callable, Dict, Optional
 
-from .errors import MissingDependency
-
 _device: Optional[str] = None
 
 
@@ -46,11 +44,6 @@ def installed(import_name: Optional[str]) -> bool:
         return importlib.util.find_spec(import_name) is not None
     except (ImportError, ValueError):
         return False
-
-
-def require(import_name: str, pip_name: str, purpose: str) -> None:
-    if not installed(import_name):
-        raise MissingDependency(pip_name, purpose)
 
 
 class Slot:

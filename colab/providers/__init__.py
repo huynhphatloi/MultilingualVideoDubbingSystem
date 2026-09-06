@@ -36,10 +36,6 @@ def find(task: str, provider: Optional[str], model: Optional[str]) -> ModelSpec:
     return registry(task).resolve(provider, model)
 
 
-def every_model() -> List[ModelSpec]:
-    return [spec for entry in REGISTRIES.values() for spec in entry.models()]
-
-
 def capabilities() -> Dict:
     flags = feature_flags.public()
     defaults = dict(DEFAULTS)

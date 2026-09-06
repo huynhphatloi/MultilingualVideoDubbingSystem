@@ -7,8 +7,7 @@ ARG INSTALL_MULTI_VOICE=false
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    HF_HOME=/models/huggingface \
-    JOBS_ROOT=/data/jobs
+    HF_HOME=/models/huggingface
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg libsndfile1 \
@@ -31,9 +30,9 @@ RUN case "${INSTALL_MULTI_VOICE}" in \
 COPY colab /app/colab
 COPY dubflow_core /app/dubflow_core
 
-RUN mkdir -p /data/jobs /models/huggingface \
+RUN mkdir -p /models/huggingface \
  && useradd -m -u 1000 app \
- && chown -R app:app /data /models /app
+ && chown -R app:app /models /app
 
 USER app
 EXPOSE 8000

@@ -10,7 +10,7 @@ Inference can run locally with Docker or remotely in a Google Colab GPU session.
 | **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · optional Google Colab |
 | **Models** | 16 ASR · 3 translation · 2 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
-| **Tests** | 154, no GPU and no model download required |
+| **Tests** | 130, no GPU and no model download required |
 | **Status** | Reference implementation for development and demonstrations; see [Limitations](#limitations) |
 
 ---
@@ -56,8 +56,8 @@ and the remaining stages continue normally.
 
 ### Design principles
 
-- Pipeline stages depend on provider interfaces instead of specific models.
-- `GET /capabilities` is the shared model catalogue used by the APIs and web UI.
+- Orchestration stages call task-level inference endpoints instead of specific models.
+- `GET /capabilities` is the model catalogue used by the gateway and web UI.
 - Each model declares its supported languages, availability requirements, and
   licence in the provider registry.
 
@@ -168,17 +168,30 @@ stages in the web UI.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    UI[Web UI] -->|upload and start| GW[FastAPI gateway]
+    GW -->|trigger| N8N[n8n workflow]
+    N8N -->|/stages/*| GW
+    GW -->|media work| FF[FFmpeg]
+    GW -->|task requests| INF[Inference API]
+    INF --> REG[Provider registry and models]
+    GW --> JOB[(job.json and output files)]
+```
+
 ### Layers
 
-The system is organized into three layers:
+The running system has four components with separate responsibilities:
 
-| Layer | Location | Responsibility |
+| Component | Location | Responsibility |
 |---|---|---|
-| HTTP API | `colab/server.py`, `ai-service/app.py` | Requests, authentication, files |
-| Pipeline | `colab/pipeline/` | Stage order and job state |
-| Providers | `colab/providers/<task>/` | One model family each |
+| Web UI | `frontend/index.html` | Upload, model selection, progress and downloads |
+| Gateway | `ai-service/app.py` | Job state, local files, FFmpeg stages and backend routing |
+| Orchestrator | `n8n/workflows/` | Stage order and workflow execution |
+| Inference API | `colab/server.py`, `colab/providers/` | Model loading and task-level inference |
 
-- `dubflow_core/` contains dependency-free contracts shared by both services:
+- `dubflow_core/` contains dependency-free logic shared by the gateway and
+  inference service:
   languages, segments, alignment calculations, and FFmpeg filter graphs.
 - `colab/providers/<task>/registry.py` contains model metadata and can be loaded
   without importing model libraries.
@@ -191,8 +204,8 @@ dubflow_core/            Shared, dependency-free: languages, segments,
                          alignment, mixing
 colab/                   AI service (runs on the Colab GPU)
   ai_service.ipynb       Notebook: install flags, launch, tunnel
-  server.py              HTTP layer only
-  jobs.py                Job store and single-worker queue
+  server.py              Task-level inference API
+  tasks.py               Short-lived asynchronous inference tasks
   core/                  Errors, runtime (device, model slots), media, config
   providers/
     base.py              ModelSpec and Registry
@@ -201,32 +214,31 @@ colab/                   AI service (runs on the Colab GPU)
     tts/                 mms, edge
     diarization/         pyannote
     separation/          demucs
-  pipeline/              The ten stages and the runner
 ai-service/              Local FastAPI service: storage, FFmpeg, orchestration
 local-ai-service/        Docker image for running the Colab API locally
 frontend/index.html      Single-file web UI, reads /capabilities
 n8n/workflows/           The visual pipeline
 scripts/                 check_contract.py, set_backend.py
-tests/                   154 tests, no GPU required
+tests/                   130 tests, no GPU required
 ```
 
 ### Pipeline stages
 
-On the n8n route the FFmpeg stages run in `ai-service`. Model calls go to the
-selected AI backend over HTTP. With `make local` that traffic stays inside the
-Docker network; with a notebook backend it crosses the tunnel. The AI backend's
-own `POST /jobs` can also run all ten stages itself.
+FFmpeg stages run in `ai-service`. Model calls go to the selected inference
+backend over HTTP. With `make local` that traffic stays inside the Docker
+network; with a notebook backend it crosses the tunnel. n8n is the only pipeline
+runner, so stage order and retry behaviour have one source of truth.
 
 | # | Stage | Runs on | Optional | Produces |
 |---|---|---|---|---|
 | 1 | `extract` | Local FFmpeg | | 48 kHz soundtrack + 16 kHz mono for the models |
-| 2 | `diarize` | AI service | ● | Speaker turns |
-| 3 | `transcribe` | AI service | | Canonical segments |
+| 2 | `diarize` | Inference backend | ● | Speaker turns |
+| 3 | `transcribe` | Inference backend | | Canonical segments |
 | 4 | `merge_segments` | Local | | A speaker per segment, by time overlap |
-| 5 | `translate` | AI service | | Translations and the SRT (skipped when source = target) |
-| 6 | `synthesize` | AI service | | One WAV per segment |
+| 5 | `translate` | Inference backend | | Translations and the SRT (skipped when source = target) |
+| 6 | `synthesize` | Inference backend | | One WAV per segment |
 | 7 | `align` | Local FFmpeg | ● | Each line fitted to its time window |
-| 8 | `separate` | AI service | ● | Background stem without the original speech |
+| 8 | `separate` | Inference backend | ● | Background stem without the original speech |
 | 9 | `mix` | Local FFmpeg | | Dub track placed at timestamps, blended |
 | 10 | `render` | Local FFmpeg | | MP4 with audio and embedded subtitles |
 
@@ -278,7 +290,7 @@ returned by `/capabilities`.
 | `seamless_asr` | seamless | 48 (no Malay, Sinhala) | windowed | — | CC-BY-NC-4.0 | base |
 | `mms_asr` | mms | 49 (no Sinhala) | windowed | — | CC-BY-NC-4.0 | base |
 
-For recognisers without timestamps, the pipeline creates audio windows from
+For recognisers without timestamps, the gateway creates audio windows from
 diarization turns or voice-activity detection and converts the result to the
 canonical segment format.
 
@@ -375,7 +387,7 @@ answers. The local Compose overlay sets `AI_BACKENDS=local` and starts that
 service. A notebook session still requires a human to start it; `make backends`
 reports whichever configured backend is alive.
 
-### Environment variables — AI service
+### Environment variables — inference service
 
 Set in the notebook before the launch cell.
 
@@ -384,10 +396,7 @@ Set in the notebook before the launch cell.
 | `AUTH_TOKEN` | generated per session | Bearer token; empty disables authentication |
 | `WHISPER_MODEL` | `small` | Model used when a request names none |
 | `HF_TOKEN` | — | Hugging Face token for gated weights. `HUGGINGFACE_TOKEN` and `HUGGING_FACE_HUB_TOKEN` are also read |
-| `JOBS_ROOT` | `/content/dubflow-jobs` | Where end-to-end jobs are stored |
-| `JOBS_LIMIT` | `20` | Job folders kept before the oldest are deleted |
 | `DUBFLOW_DEVICE` | auto-detected | Force `cuda` or `cpu` |
-| `DUBFLOW_KEEP_MODELS` | unset | Keep models resident between stages; see [Memory management](#memory-management) |
 | `DUBFLOW_MULTI_VOICE` | `false` | Force diarization and use a stable Edge voice per speaker label |
 | `TRANSLATION_MODEL` | `facebook/nllb-200-distilled-600M` | Override the default NLLB checkpoint |
 | `SEAMLESS_MODEL` | `facebook/hf-seamless-m4t-medium` | Override the SeamlessM4T checkpoint |
@@ -399,10 +408,6 @@ in the same slot releases the current model, runs garbage collection, and
 clears the CUDA cache. `GET /health` reports resident models, and `POST /unload`
 releases them.
 
-For `POST /jobs`, a slot is released after its final stage. Set
-`DUBFLOW_KEEP_MODELS=1` to retain models between jobs when sufficient memory is
-available.
-
 The n8n workflow calls `/transcribe`, `/translate`, and `/synthesize` as
 independent requests, so those models can remain resident. Call `POST /unload`
 between runs when GPU memory is limited.
@@ -413,10 +418,10 @@ between runs when GPU memory is limited.
 
 Both services expose OpenAPI documentation at `/docs`.
 
-### AI service (Colab)
+### Inference service (Colab or local)
 
 All routes take `Authorization: Bearer $COLAB_API_TOKEN` when `AUTH_TOKEN` is
-set. `GET /health` stays open so the local service can probe it.
+set. `GET /health` stays open so the gateway can probe it.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -424,14 +429,9 @@ set. `GET /health` stays open so the local service can probe it.
 | `GET` | `/health` | Liveness, device, resident models |
 | `GET` | `/languages` | The 50 application languages |
 | `POST` | `/validate` | Check a job configuration without creating one |
-| `POST` | `/jobs` | Dub a video end to end (returns immediately) |
-| `GET` | `/jobs`, `/jobs/{id}` | List, or one job's status and configuration |
-| `GET` | `/jobs/{id}/segments` | Canonical segments and speaker turns |
-| `GET` | `/jobs/{id}/download`, `/jobs/{id}/subtitle` | The rendered MP4 and the SRT |
-| `DELETE` | `/jobs/{id}` | Remove a job and its files |
 | `POST` | `/unload` | Release every resident model |
 
-Stage endpoints can also be called independently:
+Inference is exposed through task-level endpoints:
 
 | Method | Path | In → out |
 |---|---|---|
@@ -452,21 +452,14 @@ curl -X POST "$COLAB_API_URL/validate" -H "Authorization: Bearer $COLAB_API_TOKE
      -d '{"target_language":"ja","tts_model":"mms"}'
 # 400: 'MMS-TTS' (mms) does not support target language 'ja'. ...
 
-# Dub a video end to end.
-curl -X POST "$COLAB_API_URL/jobs" -H "Authorization: Bearer $COLAB_API_TOKEN" \
-     -F video=@clip.mp4 \
-     -F target_language=vi \
-     -F asr_provider=faster_whisper -F asr_model=large-v3-turbo \
-     -F translation_provider=nllb \
-     -F tts_provider=edge -F tts_model=edge \
-     -F enable_diarization=true \
-     -F enable_alignment=true
-
-curl "$COLAB_API_URL/jobs/<job_id>"           # status, config, alignment summary
-curl -OJ "$COLAB_API_URL/jobs/<job_id>/download"
+# Translate one batch directly.
+curl -X POST "$COLAB_API_URL/translate" \
+     -H "Authorization: Bearer $COLAB_API_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"source_language":"en","target_language":"vi","texts":["Hello"]}'
 ```
 
-### Local service
+### Gateway and job API
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -528,20 +521,9 @@ are `min_speed` and `max_speed` per request, defaulting to 0.75 and 1.35.
 
 Speaker labels are diarization labels: `SPEAKER_00` is a cluster, not a person.
 
-### Legacy API compatibility
+### Behaviour notes
 
-Legacy parameter aliases remain supported. Voice-cloning options and endpoints
-were removed with the F5 providers.
-
-| Previous | Current | Notes |
-|---|---|---|
-| `model=large-v3` | `asr_model=large-v3` | `model` still accepted |
-| `translation_engine=nllb` | `translation_model=nllb` | Still accepted |
-| `tts_engine=mms` | `tts_model=mms` | Still accepted |
-| `GET /health` → `whisper_models`, `tts_engines` | `GET /capabilities` | The old keys are still published |
-| Six-stage progress | Ten stages, optional ones skip | `progress` counts planned stages only |
-
-Current behavior differs from the original pipeline in three areas:
+The current design differs from the original prototype in three areas:
 
 - Alignment is enabled by default. Generated speech is fitted to its original
   time window.
@@ -561,14 +543,14 @@ make test    # python3 -m pytest tests -q
 make check   # tests + syntax + JSON + contract + compose validation
 ```
 
-The suite needs no GPU, no model download and no torch. The registry, the API,
-the configuration rules and both implementations of the pipeline are exercised
-with stand-in models and real FFmpeg.
+The suite needs no GPU, model download or torch. It exercises the registry,
+both APIs, configuration rules, asynchronous tasks, job lifecycle and shared
+media logic with stand-in models and real FFmpeg.
 
 ### Contract check
 
-`scripts/check_contract.py` verifies that the frontend, local API, n8n form, and
-provider registry use the same models and pipeline stages.
+`scripts/check_contract.py` verifies that the frontend, gateway, n8n form and
+provider registry agree on models, flags and pipeline stages.
 
 ### Make targets
 
@@ -608,7 +590,7 @@ dependency changes require a rebuild.
 | `503` *needs the '…' package* | The engine's flag is off in the notebook | Enable it in cell 1, re-run the install cell, then re-run the launch cell |
 | `503` *HF_TOKEN is not set* | pyannote's weights are gated | Accept the conditions on both pyannote model pages, paste a token into cell 1 |
 | Colab reports incompatible imports | An optional package replaced a pinned dependency | Disable the most recently enabled optional package, restart the runtime, and run all cells again |
-| CUDA out of memory on the n8n route | Three models resident at once | `POST /unload`, or choose a smaller checkpoint |
+| CUDA out of memory on the n8n route | Several models remain resident | `POST /unload`, or choose a smaller checkpoint |
 
 ---
 
@@ -619,8 +601,9 @@ dependency changes require a rebuild.
 - Segments are never split at a speaker change. An utterance where two people
   overlap is credited to whichever speaker holds most of it, recorded in
   `speaker_confidence`.
-- Colab storage is ephemeral. A dropped session loses queued and running jobs, so
-  download results promptly.
+- Colab tasks and loaded models are ephemeral. Job manifests and completed files
+  stay in the local gateway, but an in-flight model request must be retried after
+  reconnecting the notebook.
 - The local services have no authentication. `ai-service` publishes port 8000
   and n8n publishes 5678, both unauthenticated. This is a demo stack; do not
   expose it to a network you do not control.
@@ -632,7 +615,7 @@ dependency changes require a rebuild.
 
 ---
 
-## Development features
+## Future work
 
 ### Per-speaker voices
 
@@ -648,10 +631,11 @@ incompatible with the base Colab environment.
 Lip synchronization is not part of the current pipeline. Adding it would
 require:
 
-1. A `lipsync` registry under `colab/providers/`, shaped like `separation/`.
-2. A `pipeline/lipsync.py` stage with an `enabled(job)`, inserted between `mix`
-   and `render`, plus its slot in `STAGE_SLOTS`.
-3. A `lip_sync` flag on `Features`, and `render` reading the lip-synced video.
+1. A `lipsync` registry under `colab/providers/`, shaped like `separation/`, and
+   a matching inference endpoint in `colab/server.py`.
+2. A `/stages/lipsync` handler in `ai-service` and an n8n node between `mix` and
+   `render`.
+3. A `lip_sync` feature flag and `render` reading the lip-synced video.
 
 For a remote notebook backend, the design must also account for transferring
 the video to and from the lip-sync stage.

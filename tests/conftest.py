@@ -9,7 +9,6 @@ for entry in (ROOT, ROOT / "colab"):
     if str(entry) not in sys.path:
         sys.path.insert(0, str(entry))
 
-os.environ.setdefault("JOBS_ROOT", str(Path(os.environ.get("TMPDIR", "/tmp")) / "dubflow-tests"))
 os.environ.setdefault("DUBFLOW_DEVICE", "cpu")
 os.environ.setdefault("DUBFLOW_MULTI_VOICE", "false")
 

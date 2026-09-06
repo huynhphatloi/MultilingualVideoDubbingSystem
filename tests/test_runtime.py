@@ -59,38 +59,3 @@ def test_device_falls_back_to_cpu_without_torch(monkeypatch):
     monkeypatch.setattr(runtime, "_device", None)
     monkeypatch.setenv("DUBFLOW_DEVICE", "cpu")
     assert runtime.device() == "cpu"
-
-
-def test_the_queue_runs_jobs_one_at_a_time_in_order(monkeypatch, tmp_path):
-    import jobs
-
-    monkeypatch.setattr(jobs, "ROOT", tmp_path)
-    running = []
-    order = []
-    overlapped = []
-
-    def fake_process(job_id):  # noqa: ANN001
-        running.append(job_id)
-        if len(running) > 1:
-            overlapped.append(tuple(running))
-        time.sleep(0.05)
-        order.append(job_id)
-        running.remove(job_id)
-
-    monkeypatch.setattr(jobs, "process", fake_process)
-    for name in ("aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"):
-        jobs.enqueue(name)
-
-    deadline = time.time() + 5
-    while len(order) < 3 and time.time() < deadline:
-        time.sleep(0.02)
-
-    assert order == ["aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"]
-    assert overlapped == [], "two jobs ran at once; the GPU would be shared"
-
-
-def test_a_job_deleted_while_queued_does_not_crash_the_worker(monkeypatch, tmp_path):
-    import jobs
-
-    monkeypatch.setattr(jobs, "ROOT", tmp_path)
-    jobs.process("dddddddddddd")  # never created; must return quietly

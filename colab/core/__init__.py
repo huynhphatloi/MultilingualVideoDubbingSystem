@@ -1,1 +1,1 @@
-"""Infrastructure shared by the providers, the pipeline and the HTTP layer."""
+"""Infrastructure shared by the providers and inference API."""

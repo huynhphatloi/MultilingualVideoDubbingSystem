@@ -110,13 +110,6 @@ class JobConfig:
         }
         return payload
 
-    def confirm_source_language(self, detected: str) -> None:
-        providers.registry("asr").require_language(self.asr, detected, "source")
-        if detected != self.target_language:
-            providers.registry("translation").require_language(
-                self.translation, detected, "source"
-            )
-
 
 def _first(values: Mapping[str, Any], *names: str) -> Optional[str]:
     for name in names:
@@ -142,25 +135,6 @@ def _speakers(values: Mapping[str, Any], name: str) -> Optional[int]:
     return count
 
 
-def rebuild(job: Mapping[str, Any]) -> JobConfig:
-    """Rebuild a stored job configuration with its detected language."""
-    stored_features = (job.get("config") or {}).get("features") or {}
-    stored_multi_voice = bool(stored_features.get("multi_voice", False))
-    if stored_multi_voice and not feature_flags.multi_voice_enabled():
-        raise InvalidRequest(
-            "This job uses multi-voice, but the AI service was restarted without "
-            "DUBFLOW_MULTI_VOICE=true. Enable the flag and restart the service."
-        )
-    config = build(
-        job.get("request") or {},
-        multi_voice=stored_multi_voice,
-    )
-    detected = job.get("source_language")
-    if detected:
-        config.source_language = detected
-    return config
-
-
 def build(
     values: Mapping[str, Any],
     *,
@@ -175,19 +149,17 @@ def build(
     asr_spec = providers.find(
         "asr",
         _first(values, "asr_provider"),
-        _first(values, "asr_model", "model") or providers.DEFAULTS["asr"],
+        _first(values, "asr_model") or providers.DEFAULTS["asr"],
     )
     translation_spec = providers.find(
         "translation",
         _first(values, "translation_provider"),
-        _first(values, "translation_model", "translation_engine")
-        or providers.DEFAULTS["translation"],
+        _first(values, "translation_model") or providers.DEFAULTS["translation"],
     )
     tts_spec = providers.find(
         "tts",
         _first(values, "tts_provider"),
-        _first(values, "tts_model", "tts_engine")
-        or ("edge" if multi_voice else providers.DEFAULTS["tts"]),
+        _first(values, "tts_model") or ("edge" if multi_voice else providers.DEFAULTS["tts"]),
     )
 
     if multi_voice and not tts_spec.supports_multispeaker:

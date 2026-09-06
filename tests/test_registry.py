@@ -17,8 +17,9 @@ def test_every_task_has_a_registry(registry):
 
 
 def test_no_model_claims_a_language_the_application_cannot_name(registry):
-    for spec in registry.every_model():
-        assert set(spec.languages) <= set(L.CODES), spec.id
+    for entry in registry.REGISTRIES.values():
+        for spec in entry.models():
+            assert set(spec.languages) <= set(L.CODES), spec.id
 
 
 def test_the_old_engine_names_are_still_registered(registry):

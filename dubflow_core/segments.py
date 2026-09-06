@@ -1,7 +1,7 @@
 """Canonical segment schema and diarization helpers."""
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Sequence
 
 DEFAULT_SPEAKER = "SPEAKER_00"
 
@@ -152,7 +152,3 @@ def public_speaker_summary(segments: Sequence[Dict]) -> List[Dict]:
         entry["segments"] += 1
         entry["seconds"] = round(entry["seconds"] + float(segment.get("duration") or 0.0), 3)
     return list(summary.values())
-
-
-def optional_float(value: Optional[float]) -> Optional[float]:
-    return None if value is None else round(float(value), 3)

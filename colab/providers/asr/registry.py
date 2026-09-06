@@ -6,22 +6,22 @@ from providers.base import ModelSpec, ProviderSpec, Registry
 
 REGISTRY = Registry("asr")
 
-WHISPER = REGISTRY.add_provider(ProviderSpec(
+REGISTRY.add_provider(ProviderSpec(
     id="faster_whisper",
     task="asr",
     display_name="Whisper (faster-whisper)",
     homepage="https://github.com/SYSTRAN/faster-whisper",
     notes="Timestamps and language detection; part of the base install.",
 ))
-SEAMLESS = REGISTRY.add_provider(ProviderSpec(
+REGISTRY.add_provider(ProviderSpec(
     id="seamless",
     task="asr",
     display_name="SeamlessM4T",
     homepage="https://huggingface.co/facebook/seamless-m4t-v2-large",
     notes="Speech-to-text mode of the translation model. No timestamps: the "
-          "pipeline windows the audio first.",
+          "gateway windows the audio first.",
 ))
-MMS = REGISTRY.add_provider(ProviderSpec(
+REGISTRY.add_provider(ProviderSpec(
     id="mms",
     task="asr",
     display_name="Meta MMS",
