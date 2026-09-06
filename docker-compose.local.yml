@@ -3,10 +3,13 @@ services:
     build:
       context: .
       dockerfile: local-ai-service/Dockerfile
+      args:
+        INSTALL_MULTI_VOICE: ${DUBFLOW_MULTI_VOICE:-false}
     environment:
       AUTH_TOKEN: ${LOCAL_API_TOKEN:-}
       DUBFLOW_DEVICE: ${DUBFLOW_DEVICE:-}
       DUBFLOW_KEEP_MODELS: ${DUBFLOW_KEEP_MODELS:-}
+      DUBFLOW_MULTI_VOICE: ${DUBFLOW_MULTI_VOICE:-false}
       HF_TOKEN: ${HF_TOKEN:-}
       JOBS_ROOT: /data/jobs
     volumes:

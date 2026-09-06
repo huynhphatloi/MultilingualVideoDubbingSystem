@@ -88,11 +88,19 @@ class FakeTTS(TTSProvider):
     def __init__(self, spec):  # noqa: ANN001
         super().__init__(spec)
         self.calls = []
+        self._selected_voice = None
+
+    @property
+    def selected_voice(self):  # noqa: ANN201
+        return self._selected_voice
 
     def synthesize(self, request, out):  # noqa: ANN001, ANN201
         lengths = {text: seconds for _, _, _, text, seconds in SCRIPT}
         source = request.text.split("] ", 1)[-1]
         self.calls.append(request.speaker_id)
+        self._selected_voice = (
+            f"voice-{request.speaker_id}" if request.multi_voice else None
+        )
         tone(out, lengths.get(source, 1.0))
 
 
@@ -184,10 +192,6 @@ def test_alignment_can_be_switched_off(tmp_path, monkeypatch, stub_models):
 
 @ffmpeg
 def test_diarization_carries_the_speaker_through_to_the_voice(tmp_path, monkeypatch, stub_models):
-    """No engine in this build varies its voice by speaker, so the dub sounds
-    the same either way. What diarization still does is decide who owns each
-    line, and that label reaches the TTS request - which is the hook a
-    multi-voice provider would use. See "Future work" in the README."""
     job, _ = run_job(tmp_path, monkeypatch, {
         "target_language": "vi", "source_language": "en", "tts_model": "mms",
         "enable_diarization": "true",
@@ -199,6 +203,26 @@ def test_diarization_carries_the_speaker_through_to_the_voice(tmp_path, monkeypa
         "SPEAKER_00", "SPEAKER_01", "SPEAKER_00"
     ]
     assert set(stub_models["engine"].calls) == {"SPEAKER_00", "SPEAKER_01"}
+
+
+@ffmpeg
+def test_multi_voice_forces_diarization_and_records_each_voice(
+    tmp_path, monkeypatch, stub_models
+):
+    monkeypatch.setenv("DUBFLOW_MULTI_VOICE", "true")
+    job, _ = run_job(tmp_path, monkeypatch, {
+        "target_language": "vi", "source_language": "en",
+        "enable_diarization": "false",
+    })
+
+    assert job["status"] == "completed", job.get("error")
+    assert job["config"]["tts"]["model"] == "edge"
+    assert job["config"]["features"]["multi_voice"] is True
+    assert job["config"]["features"]["diarization"] is True
+    assert job["speaker_voice_map"] == {
+        "SPEAKER_00": "voice-SPEAKER_00",
+        "SPEAKER_01": "voice-SPEAKER_01",
+    }
 
 
 @ffmpeg

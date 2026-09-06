@@ -11,6 +11,7 @@ for entry in (ROOT, ROOT / "colab"):
 
 os.environ.setdefault("JOBS_ROOT", str(Path(os.environ.get("TMPDIR", "/tmp")) / "dubflow-tests"))
 os.environ.setdefault("DUBFLOW_DEVICE", "cpu")
+os.environ.setdefault("DUBFLOW_MULTI_VOICE", "false")
 
 import pytest  # noqa: E402
 

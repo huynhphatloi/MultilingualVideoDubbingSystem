@@ -34,7 +34,7 @@ CONFIG = {
     "translation": {"provider": "nllb", "model": "nllb"},
     "tts": {"provider": "mms", "model": "mms"},
     "features": {"diarization": False, "alignment": True,
-                 "source_separation": False},
+                 "source_separation": False, "multi_voice": False},
     "alignment_limits": {"min_speed": 0.75, "max_speed": 1.35, "tolerance": 0.05,
                          "allow_stretch": False},
 }
@@ -100,9 +100,13 @@ def service(tmp_path, monkeypatch):  # noqa: ANN201
             return FakeResponse({"translations": [f"[vi] {text}" for text in texts]})
         if path == "/synthesize":
             source = kwargs["data"]["text"].split("] ", 1)[-1]
+            headers = {"x-tts-model": "test/tts"}
+            speaker = kwargs["data"].get("speaker_id")
+            if speaker:
+                headers["x-tts-voice"] = f"voice-{speaker}"
             return FakeResponse(
                 content=tone_bytes(speech.get(source, 1.0)),
-                headers={"x-tts-model": "test/tts"},
+                headers=headers,
             )
         raise AssertionError(f"unexpected backend call {path}")
 
@@ -207,6 +211,42 @@ def test_diarization_labels_every_segment_with_its_speaker(service, monkeypatch)
     # Every line was still voiced, one clip per segment.
     assert all(segment["tts_file"] for segment in job["segments"])
     assert len([1 for path, _ in calls if path == "/synthesize"]) == len(job["segments"])
+
+
+@ffmpeg
+def test_multi_voice_sends_speaker_ids_and_records_the_voice_map(service, monkeypatch):
+    client, calls, tmp_path = service
+    import app
+
+    configured = json.loads(json.dumps(CONFIG))
+    configured["features"].update({"diarization": True, "multi_voice": True})
+    configured["diarization"] = {"provider": "pyannote", "model": "pyannote_3_1"}
+    configured["tts"] = {"provider": "edge", "model": "edge"}
+    original = app._colab_request
+
+    def routed(path, method="POST", **kwargs):  # noqa: ANN001, ANN202
+        if path == "/validate":
+            return FakeResponse({"valid": True, "config": configured})
+        return original(path, method, **kwargs)
+
+    monkeypatch.setattr(app, "_colab_request", routed)
+    job_id = upload(client, tmp_path)
+    for name in (
+        "extract", "diarize", "transcribe", "merge_segments", "translate", "synthesize"
+    ):
+        stage(client, name, job_id)
+
+    job = client.get(f"/jobs/{job_id}").json()
+    voice_calls = [data for path, data in calls if path == "/synthesize"]
+    assert [call["speaker_id"] for call in voice_calls] == ["SPEAKER_00", "SPEAKER_01"]
+    assert {call["multi_voice"] for call in voice_calls} == {"true"}
+    assert job["speaker_voice_map"] == {
+        "SPEAKER_00": "voice-SPEAKER_00",
+        "SPEAKER_01": "voice-SPEAKER_01",
+    }
+    assert [segment["tts_voice"] for segment in job["segments"]] == [
+        "voice-SPEAKER_00", "voice-SPEAKER_01"
+    ]
 
 
 @ffmpeg

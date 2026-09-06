@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import providers  # noqa: E402
-from core import config as job_config  # noqa: E402
+from core import config as job_config, feature_flags  # noqa: E402
 from core.errors import InvalidRequest, ServiceError  # noqa: E402
 from core.media import Scratch, duration, normalise_speech, sample_rate  # noqa: E402
 from core.runtime import device, loaded, release_all  # noqa: E402
@@ -117,6 +117,7 @@ def health() -> Dict:
         "device": device(),
         "services": ["transcription", "translation", "speech", "diarization", "pipeline"],
         "loaded": loaded(),
+        "feature_flags": feature_flags.public(),
         "whisper_model": WHISPER_MODEL,
         "whisper_models": sorted(
             spec.id for spec in asr.for_provider("faster_whisper")
@@ -312,13 +313,25 @@ def synthesize(
     engine: str = Form(""),
     provider: str = Form(""),
     model: str = Form(""),
+    speaker_id: str = Form(""),
+    multi_voice: str = Form(""),
     authorization: Optional[str] = Header(None),
 ) -> Response:
     _authorize(authorization)
     target = _language(language)
-    spec = providers.find(
-        "tts", provider or None, model or engine or providers.DEFAULTS["tts"]
-    )
+    requested_multi_voice = job_config.as_bool(multi_voice, False)
+    if requested_multi_voice and not feature_flags.multi_voice_enabled():
+        raise InvalidRequest(
+            "Multi-voice is disabled. Start the AI service with "
+            "DUBFLOW_MULTI_VOICE=true before requesting it."
+        )
+    default_model = "edge" if requested_multi_voice else providers.DEFAULTS["tts"]
+    spec = providers.find("tts", provider or None, model or engine or default_model)
+    if requested_multi_voice and not spec.supports_multispeaker:
+        raise InvalidRequest(
+            "Multi-voice mode requires Edge TTS. Restart without "
+            "DUBFLOW_MULTI_VOICE=true to use a single-voice model."
+        )
     providers.registry("tts").require_language(spec, target, "target")
     text = text.strip()
     if not text:
@@ -332,7 +345,13 @@ def synthesize(
         with jobs.lock:
             engine_instance = providers.tts.load(spec, target)
             engine_instance.synthesize(
-                SpeechRequest(text=text, language=target, speed=speed),
+                SpeechRequest(
+                    text=text,
+                    language=target,
+                    speed=speed,
+                    speaker_id=speaker_id.strip() or None,
+                    multi_voice=requested_multi_voice,
+                ),
                 output,
             )
         payload = output.read_bytes()
@@ -341,16 +360,20 @@ def synthesize(
         rate = sample_rate(output)
         length = duration(output)
 
+    headers = {
+        "X-TTS-Model": engine_instance.name,
+        "X-TTS-Engine": spec.id,
+        "X-TTS-Provider": spec.provider,
+        "X-TTS-Sample-Rate": str(rate),
+        "X-TTS-Duration": f"{length:.3f}",
+    }
+    if engine_instance.selected_voice:
+        headers["X-TTS-Voice"] = engine_instance.selected_voice
+
     return Response(
         content=payload,
         media_type="audio/wav",
-        headers={
-            "X-TTS-Model": engine_instance.name,
-            "X-TTS-Engine": spec.id,
-            "X-TTS-Provider": spec.provider,
-            "X-TTS-Sample-Rate": str(rate),
-            "X-TTS-Duration": f"{length:.3f}",
-        },
+        headers=headers,
     )
 
 

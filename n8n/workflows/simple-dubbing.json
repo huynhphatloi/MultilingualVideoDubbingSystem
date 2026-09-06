@@ -5,7 +5,7 @@
     {
       "parameters": {
         "formTitle": "Multilingual Video Dubbing",
-        "formDescription": "Upload a short video and pick a target language. Everything else uses the AI service's own defaults: Whisper small, NLLB-200, and voice cloning whenever the chosen voice only speaks in a cloned one. This form is static and cannot see which engines the running session installed - the web UI at localhost:8000 reads /capabilities and offers the full set.",
+        "formDescription": "Upload a short video and pick a target language. The AI service supplies the remaining defaults. This form is static and cannot see which engines the running session installed; the web UI at localhost:8000 reads /capabilities and offers the full set.",
         "formFields": {
           "values": [
             {
@@ -320,7 +320,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'mms - MMS-TTS, the default'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// Only what this form asks for. Every other setting - the recogniser, the\n// translator, diarization, alignment, separation and voice cloning - is left\n// out so the AI service applies its own default, which is the one place that\n// knows what this session can actually run.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n};\n\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
+        "jsCode": "const form = $input.first();\nconst keys = Object.keys(form.binary || {});\nif (!keys.length) throw new Error('No video was uploaded');\n\n// Dropdown labels read 'Vietnamese (vi)' and 'mms - MMS-TTS, the default'.\nconst codeOf = (label, fallback) => {\n  const match = String(label || '').match(/\\(([a-z]{2})\\)\\s*$/);\n  return match ? match[1] : fallback;\n};\nconst firstWord = (label, fallback) =>\n  String(label || fallback).trim().split(/\\s+/)[0] || fallback;\nconst chosenSource = String(form.json['Source Language'] || '');\n\n// The AI service applies defaults for settings this static form does not ask for.\nconst payload = {\n  target_language: codeOf(form.json['Target Language'], 'vi'),\n  source_language: /^detect/i.test(chosenSource) ? 'auto' : codeOf(chosenSource, 'auto'),\n  tts_model: firstWord(form.json['Voice Model'], ''),\n};\n\nreturn [{ json: payload, binary: { video: form.binary[keys[0]] } }];"
       },
       "id": "0bd18971-d5c4-4f07-8131-f84f8a377002",
       "name": "Prepare Upload",

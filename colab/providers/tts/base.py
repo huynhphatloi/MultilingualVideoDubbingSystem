@@ -15,6 +15,7 @@ class SpeechRequest:
     language: str
     speed: float = 1.0
     speaker_id: Optional[str] = None
+    multi_voice: bool = False
 
 
 class TTSProvider(ABC):
@@ -24,6 +25,10 @@ class TTSProvider(ABC):
     @property
     def name(self) -> str:
         return self.spec.repo_id or self.spec.id
+
+    @property
+    def selected_voice(self) -> Optional[str]:
+        return None
 
     @abstractmethod
     def synthesize(self, request: SpeechRequest, out: Path) -> None:

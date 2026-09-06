@@ -30,6 +30,7 @@ def run(job: dict, folder: Path) -> None:
                 language=config.target_language,
                 speed=1.0,
                 speaker_id=speaker,
+                multi_voice=config.features.multi_voice,
             ),
             output,
         )
@@ -37,6 +38,9 @@ def run(job: dict, folder: Path) -> None:
         segment["tts_duration_raw"] = round(duration(output), 3)
         segment["tts_duration"] = segment["tts_duration_raw"]
         segment["tts_model"] = provider.name
+        if config.features.multi_voice and provider.selected_voice:
+            segment["tts_voice"] = provider.selected_voice
+            job.setdefault("speaker_voice_map", {})[speaker] = provider.selected_voice
         counts[provider.name] = counts.get(provider.name, 0) + 1
 
     job["models_used"] = counts

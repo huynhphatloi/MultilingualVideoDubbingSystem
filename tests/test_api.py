@@ -23,6 +23,7 @@ def test_capabilities_is_the_source_of_truth(client):
     ]
     assert payload["stages"][0] == "extract" and payload["stages"][-1] == "render"
     assert payload["defaults"]["asr"] == "small"
+    assert payload["feature_flags"]["multi_voice"] is False
     asr = {
         model["id"]: model
         for group in payload["providers"]["asr"] for model in group["models"]
@@ -40,6 +41,7 @@ def test_health_keeps_the_keys_the_previous_version_published(client):
     engines = payload["tts_engines"]
     assert {"mms", "edge"} <= set(engines)
     assert engines["mms"]["available"] is True
+    assert payload["feature_flags"]["multi_voice"] is False
     assert payload["languages"][0]["code"]
 
 
@@ -128,6 +130,14 @@ def test_synthesize_refuses_a_language_the_engine_cannot_speak(client):
     })
     assert response.status_code == 400
     assert "does not support target language 'ja'" in response.json()["detail"]
+
+
+def test_synthesize_cannot_enable_multi_voice_when_the_startup_flag_is_off(client):
+    response = client.post("/synthesize", data={
+        "text": "hello", "language": "vi", "multi_voice": "true"
+    })
+    assert response.status_code == 400
+    assert "Start the AI service with DUBFLOW_MULTI_VOICE=true" in response.json()["detail"]
 
 
 def test_authentication_is_still_enforced_when_a_token_is_set(client, monkeypatch):

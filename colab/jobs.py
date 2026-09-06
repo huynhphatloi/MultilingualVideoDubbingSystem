@@ -111,6 +111,7 @@ def public(job: Dict) -> Dict:
         "models_used": job.get("models_used"),
         "speakers": job.get("speakers"),
         "speaker_summary": job.get("speaker_summary"),
+        "speaker_voice_map": job.get("speaker_voice_map"),
         "alignment": job.get("alignment"),
         "mix_mode": job.get("mix_mode"),
         "duration_seconds": job.get("duration_seconds"),

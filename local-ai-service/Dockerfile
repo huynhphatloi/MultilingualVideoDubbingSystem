@@ -2,6 +2,7 @@ FROM python:3.11-slim
 
 ARG TORCH_VERSION=2.8.0
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+ARG INSTALL_MULTI_VOICE=false
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -21,6 +22,11 @@ RUN python -m pip install --upgrade pip \
 
 COPY colab/requirements.txt /tmp/colab-requirements.txt
 RUN python -m pip install -r /tmp/colab-requirements.txt
+
+COPY local-ai-service/requirements.multi-voice.txt /tmp/multi-voice-requirements.txt
+RUN case "${INSTALL_MULTI_VOICE}" in \
+      1|true|yes|on) python -m pip install -r /tmp/multi-voice-requirements.txt ;; \
+    esac
 
 COPY colab /app/colab
 COPY dubflow_core /app/dubflow_core

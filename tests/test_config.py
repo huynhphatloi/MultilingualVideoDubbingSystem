@@ -21,6 +21,7 @@ def test_defaults_match_the_pre_refactor_pipeline():
         "diarization": False,
         "alignment": True,
         "source_separation": False,
+        "multi_voice": False,
     }
 
 
@@ -95,6 +96,45 @@ def test_diarization_needs_an_installed_provider():
     assert failure.value.status_code == 503
 
 
+def test_multi_voice_flag_selects_edge_and_requires_diarization(
+    monkeypatch, all_installed
+):
+    monkeypatch.setenv("DUBFLOW_MULTI_VOICE", "true")
+    built = build(enable_diarization="false")
+
+    assert built.tts.id == "edge"
+    assert built.features.multi_voice is True
+    assert built.features.diarization is True
+    assert built.diarization.id == "pyannote_3_1"
+
+
+def test_multi_voice_flag_rejects_a_single_voice_engine(monkeypatch, all_installed):
+    monkeypatch.setenv("DUBFLOW_MULTI_VOICE", "true")
+    with pytest.raises(InvalidRequest) as failure:
+        build(tts_model="mms")
+    assert "requires a TTS model with multi-speaker support" in str(failure.value)
+
+
+def test_rebuild_keeps_the_feature_state_saved_with_the_job(monkeypatch, all_installed):
+    monkeypatch.setenv("DUBFLOW_MULTI_VOICE", "true")
+    rebuilt = config.rebuild({
+        "request": {"target_language": "vi"},
+        "config": {"features": {"multi_voice": True}},
+    })
+    assert rebuilt.features.multi_voice is True
+    assert rebuilt.tts.id == "edge"
+
+
+def test_rebuild_refuses_a_multi_voice_job_after_the_flag_is_disabled(monkeypatch):
+    monkeypatch.setenv("DUBFLOW_MULTI_VOICE", "false")
+    with pytest.raises(InvalidRequest) as failure:
+        config.rebuild({
+            "request": {"target_language": "vi"},
+            "config": {"features": {"multi_voice": True}},
+        })
+    assert "restarted without DUBFLOW_MULTI_VOICE=true" in str(failure.value)
+
+
 
 def test_alignment_limits_are_validated_and_carried():
     built = build(min_speed="0.8", max_speed="1.5")
@@ -118,7 +158,7 @@ def test_public_shape_matches_the_documented_job_config():
     assert payload["asr"]["model"] == "large-v3-turbo"
     assert payload["translation"]["model"] == "nllb"
     assert set(payload["features"]) == {
-        "diarization", "alignment", "source_separation"
+        "diarization", "alignment", "source_separation", "multi_voice"
     }
 
 

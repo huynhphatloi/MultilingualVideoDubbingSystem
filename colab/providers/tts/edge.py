@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -29,7 +31,11 @@ class EdgeProvider(TTSProvider):
     def name(self) -> str:
         return f"edge-tts/{self._chosen}" if self._chosen else "edge-tts"
 
-    def voice_for(self, language: str) -> str:
+    @property
+    def selected_voice(self) -> Optional[str]:
+        return self._chosen
+
+    def voices_for(self, language: str) -> List[dict]:
         prefix = locale_prefix(language) + "-"
         matches = [
             voice for voice in self.voices
@@ -39,13 +45,35 @@ class EdgeProvider(TTSProvider):
             raise UnsupportedLanguage(
                 f"Edge TTS publishes no voice for '{language}'. Pick another engine."
             )
+        return matches
+
+    def voice_for(
+        self,
+        language: str,
+        speaker_id: Optional[str] = None,
+        multi_voice: bool = False,
+    ) -> str:
+        matches = self.voices_for(language)
+        if multi_voice and speaker_id:
+            ordered = sorted(matches, key=lambda voice: str(voice.get("ShortName", "")))
+            suffix = re.search(r"(\d+)$", speaker_id)
+            if suffix:
+                index = int(suffix.group(1))
+            else:
+                digest = hashlib.sha256(speaker_id.encode("utf-8")).digest()
+                index = int.from_bytes(digest[:8], "big")
+            return str(ordered[index % len(ordered)]["ShortName"])
         female = [v for v in matches if str(v.get("Gender", "")).lower() == "female"]
         return str((female or matches)[0]["ShortName"])
 
     def synthesize(self, request: SpeechRequest, out: Path) -> None:
         import edge_tts
 
-        voice = self.voice_for(request.language)
+        voice = self.voice_for(
+            request.language,
+            speaker_id=request.speaker_id,
+            multi_voice=request.multi_voice,
+        )
         self._chosen = voice
         percent = int(round((request.speed - 1.0) * 100))
         with Scratch(".mp3") as raw:

@@ -1,19 +1,17 @@
 # DubFlow — Multilingual Video Dubbing
 
-A model-agnostic video dubbing pipeline. Speech recognition, translation, speech
-generation, speaker diarization and source separation are each a
-**provider** behind a capability, so any of them can be swapped from the web UI
-or the n8n form without changing the pipeline. Inference can run in a local
-Docker service or on a Google Colab GPU. Model weights are loaded lazily and
-cached outside the container image.
+DubFlow is a configurable video dubbing pipeline built with FastAPI, n8n, and
+FFmpeg. It supports interchangeable providers for speech recognition,
+translation, speech generation, speaker diarization, and source separation.
+Inference can run locally with Docker or remotely in a Google Colab GPU session.
 
 | | |
 |---|---|
 | **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · optional Google Colab |
 | **Models** | 16 ASR · 3 translation · 2 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
-| **Tests** | 141, no GPU and no model download required |
-| **Status** | Reference implementation. Demo-grade security — see [Limitations](#limitations) |
+| **Tests** | 151, no GPU and no model download required |
+| **Status** | Reference implementation for development and demonstrations; see [Limitations](#limitations) |
 
 ---
 
@@ -45,8 +43,7 @@ flowchart TD
     DI --> AR[Speech recognition · ASR provider]
     AR --> MG[Merge speakers + transcript]
     MG --> TR[Translate · translation provider]
-    TR --> VR{{Per-speaker voice references}}
-    VR --> SY[Generate voice · TTS provider]
+    TR --> SY[Generate voice · TTS provider]
     SY --> AL{{Duration alignment}}
     AL --> SP{{Source separation · Demucs}}
     SP --> MX[Mix · FFmpeg]
@@ -54,17 +51,15 @@ flowchart TD
     RD --> OUT([Dubbed video])
 ```
 
-Hexagons are optional stages. When a job switches one off it reports itself as
-skipped and the pipeline continues, so one graph serves every configuration.
+Hexagons represent optional stages. Disabled stages are recorded as skipped,
+and the remaining stages continue normally.
 
-**Three design rules** hold the project together:
+### Design principles
 
-1. **The pipeline never names a model.** Stages depend on `ASRProvider`,
-   `TTSProvider` and friends, never on Whisper or F5.
-2. **One catalogue.** `GET /capabilities` is the only list of models; the UI and
-   the local API read it rather than keeping copies.
-3. **Nothing is claimed that was not checked.** A model appears under a language
-   only if its own card or source says so, and its licence is recorded with it.
+- Pipeline stages depend on provider interfaces instead of specific models.
+- `GET /capabilities` is the shared model catalogue used by the APIs and web UI.
+- Each model declares its supported languages, availability requirements, and
+  licence in the provider registry.
 
 ---
 
@@ -105,10 +100,21 @@ Whisper small, NLLB-200 600M and MMS-TTS path runs without optional packages.
 On CPU, start with a 10-second clip and expect model loading and inference to be
 much slower than on a GPU.
 
-Local mode deliberately keeps optional engines out of the base image. The UI
-reports F5-TTS, pyannote and Demucs as unavailable until their packages and any
-required credentials are added. The standard local path still completes a dub
-with one stock voice, duration alignment and voice-over mixing.
+Optional packages are not installed in the base local image. Edge TTS,
+pyannote, and Demucs remain unavailable until their packages and any required
+credentials are added. The base configuration supports a stock MMS voice,
+duration alignment, and voice-over mixing.
+
+Multi-voice is a development feature and is off by default. To build the two
+optional packages it needs and start the local stack with the feature enabled:
+
+```bash
+DUBFLOW_MULTI_VOICE=true HF_TOKEN=hf_your_token make local
+```
+
+The flag selects Edge TTS, forces speaker diarization, and keeps one Edge voice
+assigned to each speaker label for the duration of the job. Put both values in
+`.env` instead if the setting should survive later restarts.
 
 Useful local commands:
 
@@ -125,15 +131,14 @@ make local-stop          # keeps jobs and downloaded model weights
 
 1. Open [`colab/ai_service.ipynb`](colab/ai_service.ipynb) in Google Colab and
    select a GPU runtime.
-2. In the first cell, enable only the engines you intend to use — see
-   [Dependency conflicts](#dependency-conflicts) — and paste a Hugging Face
+2. In the first cell, enable only the engines you intend to use. See
+   [Optional model packages](#optional-model-packages). Add a Hugging Face
    token into `HF_TOKEN` if you want speaker diarization.
 3. Run all cells. The last one prints a ready-to-run command.
 
-The launch cell stops the previous server and reloads the checkout, so `Run all`
-is enough after pulling new code. A session started by an older copy of the
-notebook holds a server that cannot be stopped from the notebook — use
-**Runtime → Restart session** first.
+The launch cell stops the previous server and reloads the checkout. If the
+session was started by an older notebook version, select **Runtime → Restart
+session** before running all cells again.
 
 #### 2. Point the local stack at that session
 
@@ -156,8 +161,8 @@ make start
 | API documentation | <http://localhost:8000/docs> |
 | n8n workflow | <http://localhost:5678> |
 
-Upload a short clip — ten to twenty seconds is enough for a first run — and
-watch the ten stages execute.
+Upload a 10–20 second clip for the first run and monitor the ten pipeline
+stages in the web UI.
 
 ---
 
@@ -165,7 +170,7 @@ watch the ten stages execute.
 
 ### Layers
 
-Three layers, and nothing reaches across them:
+The system is organized into three layers:
 
 | Layer | Location | Responsibility |
 |---|---|---|
@@ -173,16 +178,11 @@ Three layers, and nothing reaches across them:
 | Pipeline | `colab/pipeline/` | Stage order and job state |
 | Providers | `colab/providers/<task>/` | One model family each |
 
-- **`dubflow_core/`** is pure standard library and is imported by both
-  services: the language table, the canonical segment schema, the alignment
-  arithmetic and the audio filter graphs. It is why the two implementations of
-  the pipeline cannot disagree about what a segment is or how a mix is built.
-- **`colab/providers/<task>/registry.py`** holds metadata only — no torch, no
-  transformers — so `GET /capabilities` answers correctly in a session where
-  nothing optional is installed, reporting each engine as `available: false`
-  rather than failing to start.
-- **`colab/providers/<task>/<name>.py`** is imported the first time a model is
-  actually run.
+- `dubflow_core/` contains dependency-free contracts shared by both services:
+  languages, segments, alignment calculations, and FFmpeg filter graphs.
+- `colab/providers/<task>/registry.py` contains model metadata and can be loaded
+  without importing model libraries.
+- Provider implementations are imported only when their models are requested.
 
 ### Repository layout
 
@@ -207,7 +207,7 @@ local-ai-service/        Docker image for running the Colab API locally
 frontend/index.html      Single-file web UI, reads /capabilities
 n8n/workflows/           The visual pipeline
 scripts/                 check_contract.py, set_backend.py
-tests/                   136 tests, no GPU required
+tests/                   151 tests, no GPU required
 ```
 
 ### Pipeline stages
@@ -232,57 +232,42 @@ own `POST /jobs` can also run all ten stages itself.
 
 ### Long stages do not hold a connection open
 
-A Cloudflare quick tunnel abandons a request that has not answered in about a
-hundred seconds. Transcribing or separating a real video takes longer, so a
-synchronous call cannot work: the caller gets a `524` that says nothing, while
-the GPU carries on with nobody left to receive the result.
+Long model stages can exceed the request limit of a Cloudflare quick tunnel.
+The four slow endpoints therefore support `async_mode`. The backend returns
+`202` with a task ID, and the local service polls `GET /tasks/{id}` until the
+task completes.
 
-The four slow stages therefore accept `async_mode`. The notebook starts the
-work in a background thread, answers `202` with a task id, and the local service
-polls `GET /tasks/{id}` — every request short enough to survive, however long
-the work takes.
-
-| | Synchronous | As a task |
+| Endpoint | Async request | Response |
 |---|---|---|
-| `POST /diarize`, `/transcribe`, `/separate` | form field `async_mode=true` | `202` + `task_id` |
-| `POST /translate` | JSON field `"async_mode": true` | `202` + `task_id` |
-| `GET /tasks/{id}` | | status, and `result` once `done` |
-| `GET /tasks/{id}/download` | | the file, for `/separate` |
+| `POST /diarize`, `/transcribe`, `/separate` | Form field `async_mode=true` | `202` with `task_id` |
+| `POST /translate` | JSON field `"async_mode": true` | `202` with `task_id` |
+| `GET /tasks/{id}` | Poll by task ID | Status and result when complete |
+| `GET /tasks/{id}/download` | Download by task ID | File produced by `/separate` |
 
-Three properties this keeps:
-
-- **Async is opt-in.** Without the field every endpoint answers exactly as
-  before, so an existing caller needs no change.
-- **A backend without it still works.** An older notebook ignores the unknown
-  field and replies `200` with the real answer; the poller takes that rather
-  than insisting on a task id.
-- **Errors keep their status.** A task that fails with a 400 reports 400, not a
-  generic 500, so an async caller learns what a synchronous one would.
+- Async processing is opt-in; requests without `async_mode` remain synchronous.
+- Older backends that return a direct `200` response remain compatible.
+- Failed tasks preserve the original HTTP status code and error message.
 
 Validation still happens inside the request, so an impossible configuration is
 refused immediately instead of becoming a task that fails later.
 
-### One source of truth
+### Model catalogue
 
-`GET /capabilities` is the catalogue. The local API proxies it, the web UI
-renders it, and [`scripts/check_contract.py`](scripts/check_contract.py) fails
-`make check` if anything grows a second copy of a model list. The n8n form is
-the one place that cannot fetch — it is a static form — so the contract check
-verifies that every id it offers exists in the registry.
+`GET /capabilities` exposes the model catalogue. The local API proxies it, the
+web UI renders it, and [`scripts/check_contract.py`](scripts/check_contract.py)
+checks that the UI, local API, n8n workflow, and registry remain consistent.
 
-Because it cannot check what a session installed, the form asks only for what
-needs no such check: the video, the two languages and the voice. Everything
-else is omitted and the AI service applies its own default. The web UI at
-<http://localhost:8000> reads `/capabilities` and offers the full set, filtered
-to what the running session can actually load.
+The n8n form is static and cannot query backend availability. It collects the
+video, languages, and voice, while the AI service applies defaults for the
+remaining settings. The web UI reads `/capabilities` and disables unavailable
+models.
 
 ---
 
 ## Models
 
-Every entry below was checked against the model's own card or source. A model is
-listed under a language **only** if its own documentation says so, and its
-licence is recorded in the registry and reported by `/capabilities`.
+The tables below reflect the metadata declared in the provider registry and
+returned by `/capabilities`.
 
 ### Speech recognition
 
@@ -293,9 +278,9 @@ licence is recorded in the registry and reported by `/capabilities`.
 | `seamless_asr` | seamless | 48 (no Malay, Sinhala) | windowed | — | CC-BY-NC-4.0 | base |
 | `mms_asr` | mms | 49 (no Sinhala) | windowed | — | CC-BY-NC-4.0 | base |
 
-A recogniser without timestamps is not excluded. The pipeline supplies windows,
-taken from the diarization turns when that stage ran and from a voice-activity
-pass otherwise, and it produces the same canonical segments as Whisper.
+For recognisers without timestamps, the pipeline creates audio windows from
+diarization turns or voice-activity detection and converts the result to the
+canonical segment format.
 
 ### Translation
 
@@ -312,14 +297,13 @@ pass otherwise, and it produces the same canonical segments as Whisper.
 | `mms` | 34 | CC-BY-NC-4.0 | base |
 | `edge` | 49 (no Armenian) | Microsoft service terms | `edge-tts` |
 
-Both are stock voices: one voice per language, the same for every speaker. No
-voice in this build clones — see [Future work](#future-work).
+Both providers use stock voices. Voice cloning is not currently supported; see
+[Future work](#future-work).
 
-`mms` covers 34 of the 50 application languages: **Meta publishes no MMS-TTS
-checkpoint** for Japanese, Chinese, Italian, Czech, Danish, Norwegian, Urdu,
+`mms` covers 34 of the 50 application languages. No MMS-TTS checkpoint is
+registered for Japanese, Chinese, Italian, Czech, Danish, Norwegian, Urdu,
 Croatian, Serbian, Slovak, Slovenian, Armenian, Georgian, Nepali, Sinhala or
-Mongolian. Those combinations are rejected at job creation with a message naming
-a working alternative, rather than failing on a 404 from the Hub.
+Mongolian. Unsupported combinations are rejected during job validation.
 
 ### Diarization and separation
 
@@ -339,22 +323,25 @@ translation engines and the `mms` voice. Three flags in the notebook's first
 cell add the rest of what this build registers:
 
 ```python
+MULTI_VOICE = False          # development feature; set True before starting the API
 INSTALL_EDGE = True          # edge           - stock voice, 49 languages, no GPU
 INSTALL_DIARIZATION = True   # pyannote.audio - one voice per speaker
 INSTALL_DEMUCS = True        # demucs         - separate speech from background
 ```
 
-Turning one off is not an error: its models then report `available: false` with
-the reason, `/capabilities` says so, the web UI disables them, and a job that
-asks for one is refused at creation rather than failing mid-pipeline.
+`MULTI_VOICE = True` requires both `INSTALL_EDGE` and
+`INSTALL_DIARIZATION`. It makes Edge the default voice provider and prevents a
+multi-voice job from running with a single-voice provider such as MMS.
+
+When a package is disabled, `/capabilities` reports its models as unavailable,
+the web UI disables them, and incompatible jobs are rejected during validation.
 
 `INSTALL_DIARIZATION` needs `HF_TOKEN`, and the account behind it has to have
 accepted the conditions on both `pyannote/speaker-diarization-3.1` and
 `pyannote/segmentation-3.0`.
 
-The notebook's preflight cell performs the providers' own imports after the
-optional installs run, so a package that replaced a pinned one is reported
-before the server starts rather than several stages into a job.
+The notebook runs a dependency preflight after installing optional packages and
+reports incompatible imports before starting the API.
 
 ### Environment variables — local stack
 
@@ -368,10 +355,12 @@ Set in `.env`; `docker-compose.yml` passes them through.
 | `KAGGLE_API_URL` / `KAGGLE_API_TOKEN` | — | Second backend slot |
 | `LOCAL_API_URL` / `LOCAL_API_TOKEN` | — | Local model service; set by the local Compose overlay |
 | `LOCAL_AI_PORT` | `8001` | Host-only port for the local model API |
+| `DUBFLOW_MULTI_VOICE` | `false` | Enable the development multi-voice path; local builds then install Edge and pyannote |
 | `COLAB_API_TIMEOUT` | `1800` | Seconds allowed per backend call |
 | `ASYNC_STAGES` | `1` | Run the slow stages as notebook tasks and poll, instead of holding one long request open |
 | `TASK_POLL_INTERVAL` | `3` | Seconds between polls |
 | `TASK_POLL_TIMEOUT` | `3600` | Seconds to keep polling before giving up on a task |
+| `STALLED_AFTER` | `1200` | Seconds before a running job is reported as stalled |
 | `BACKEND_PROBE_TTL` | `30` | Seconds a successful `/health` probe is cached |
 | `BACKEND_PROBE_TIMEOUT` | `10` | Seconds to wait for `/health` |
 | `CAPABILITIES_TTL` | `60` | Seconds the model catalogue is cached |
@@ -398,27 +387,25 @@ Set in the notebook before the launch cell.
 | `JOBS_ROOT` | `/content/dubflow-jobs` | Where end-to-end jobs are stored |
 | `JOBS_LIMIT` | `20` | Job folders kept before the oldest are deleted |
 | `DUBFLOW_DEVICE` | auto-detected | Force `cuda` or `cpu` |
-| `DUBFLOW_KEEP_MODELS` | unset | Keep models resident between stages — see [Memory](#memory) |
+| `DUBFLOW_KEEP_MODELS` | unset | Keep models resident between stages; see [Memory management](#memory-management) |
+| `DUBFLOW_MULTI_VOICE` | `false` | Force diarization and use a stable Edge voice per speaker label |
 | `TRANSLATION_MODEL` | `facebook/nllb-200-distilled-600M` | Override the default NLLB checkpoint |
 | `SEAMLESS_MODEL` | `facebook/hf-seamless-m4t-medium` | Override the SeamlessM4T checkpoint |
-| `F5_VI_MODEL` | `hynt/F5-TTS-Vietnamese-ViVoice` | Override the F5 Vietnamese checkpoint |
 
-### Memory
+### Memory management
 
-Nothing is preloaded. Each task owns a slot holding exactly one model; asking
-for a different one releases the previous, runs `gc.collect()` and empties the
-CUDA cache. `GET /health` reports what is resident and `POST /unload` drops
-everything.
+Models load on demand. Each task type has one model slot; loading another model
+in the same slot releases the current model, runs garbage collection, and
+clears the CUDA cache. `GET /health` reports resident models, and `POST /unload`
+releases them.
 
-`POST /jobs` goes further: a slot is freed as soon as no later stage of that job
-needs it, so the recogniser is gone before the voice loads and peak memory is
-roughly one model rather than three. Set `DUBFLOW_KEEP_MODELS=1` to keep them
-for the next job instead, which is worth it where memory is not the constraint.
+For `POST /jobs`, a slot is released after its final stage. Set
+`DUBFLOW_KEEP_MODELS=1` to retain models between jobs when sufficient memory is
+available.
 
-The n8n route cannot do this — it calls `/transcribe`, `/translate` and
-`/synthesize` as independent requests, none of which knows what comes next — so
-all three models stay resident. Call `POST /unload` between runs if the GPU is
-tight.
+The n8n workflow calls `/transcribe`, `/translate`, and `/synthesize` as
+independent requests, so those models can remain resident. Call `POST /unload`
+between runs when GPU memory is limited.
 
 ---
 
@@ -439,20 +426,19 @@ set. `GET /health` stays open so the local service can probe it.
 | `POST` | `/validate` | Check a job configuration without creating one |
 | `POST` | `/jobs` | Dub a video end to end (returns immediately) |
 | `GET` | `/jobs`, `/jobs/{id}` | List, or one job's status and configuration |
-| `GET` | `/jobs/{id}/segments` | Canonical segments, turns and references |
-| `GET` | `/jobs/{id}/download`, `/subtitle` | The rendered MP4 and the SRT |
+| `GET` | `/jobs/{id}/segments` | Canonical segments and speaker turns |
+| `GET` | `/jobs/{id}/download`, `/jobs/{id}/subtitle` | The rendered MP4 and the SRT |
 | `DELETE` | `/jobs/{id}` | Remove a job and its files |
 | `POST` | `/unload` | Release every resident model |
 
-Stage endpoints are reusable on their own — a system that needs only
-translation and speech never touches ASR or video:
+Stage endpoints can also be called independently:
 
 | Method | Path | In → out |
 |---|---|---|
 | `POST` | `/diarize` | audio → speaker turns |
 | `POST` | `/transcribe` | audio [+ turns] → canonical segments |
 | `POST` | `/translate` | texts → translations |
-| `POST` | `/synthesize` | text [+ reference] → WAV |
+| `POST` | `/synthesize` | text → WAV |
 | `POST` | `/align` | segments → per-segment speed plan |
 | `POST` | `/separate` | audio → one stem |
 
@@ -491,43 +477,31 @@ curl -OJ "$COLAB_API_URL/jobs/<job_id>/download"
 | `POST` | `/jobs/{id}/start` | Hand the job to n8n, or resume a failed job |
 | `POST` | `/stages/{stage}` | Run one stage; the ten names are in the table above |
 | `GET` | `/jobs/{id}` | The full job manifest |
-| `GET` | `/jobs/{id}/download`, `/subtitle` | Results |
+| `GET` | `/jobs/{id}/download`, `/jobs/{id}/subtitle` | Results |
 
 ### Resuming a failed job
 
-Every stage writes its result into `job.json` or the job folder before the next
-one starts, so a failure loses only the stage that failed. `POST /stages/{name}`
-therefore reports a stage that has already produced its output as `reused` and
-does not run it again:
+Each stage stores its result in `job.json` or the job directory before the next
+stage starts. Completed stages return `reused` instead of running again:
 
 ```json
 {"stage": "extract", "status": "completed", "reused": true,
  "reason": "this stage already produced its output"}
 ```
 
-`POST /jobs/{id}/start` on a failed job uses that. It clears the failure,
-forgets the record of the stage that stopped, and re-triggers the workflow —
-the finished stages wave themselves through and the run continues where it
-left off:
+Calling `POST /jobs/{id}/start` for a failed job clears the failure and restarts
+the workflow from the failed stage:
 
 ```json
 {"status": "accepted", "resumed_from": "translate",
  "reusing": ["upload", "extract", "transcribe", "merge_segments"]}
 ```
 
-Selecting a job in the web UI's history restores the settings it ran with —
-languages, the three models and the feature flags — so a past run is the
-starting point for the next one, whether that is retrying the same video or
-running a new one the same way. The source language restored is the one that
-was *asked* for, so a job that ran on auto-detect comes back on auto-detect
-rather than pinned to whatever the recogniser happened to hear.
+Selecting a job in the web UI restores its requested languages, models, and
+feature flags. Failed jobs expose a **Retry from "…"** action. Jobs originally
+configured for automatic language detection remain in automatic mode.
 
-The web UI offers this as **Retry from "…"** on a failed job. It matters most
-for transcription, which is the expensive stage: a translation failure used to
-mean uploading the video again and paying for the recogniser twice.
-
-Pass `{"job_id": "…", "force": true}` to a stage to run it again on purpose,
-which is what a caller wants after changing a model.
+Pass `{"job_id": "…", "force": true}` to run a completed stage again.
 
 ### Canonical segment
 
@@ -554,9 +528,10 @@ are `min_speed` and `max_speed` per request, defaulting to 0.75 and 1.35.
 
 Speaker labels are diarization labels: `SPEAKER_00` is a cluster, not a person.
 
-### Compatibility with the previous API
+### Legacy API compatibility
 
-Nothing was removed. The old parameters still work and map onto the new ones.
+Legacy parameter aliases remain supported. Voice-cloning options and endpoints
+were removed with the F5 providers.
 
 | Previous | Current | Notes |
 |---|---|---|
@@ -566,15 +541,14 @@ Nothing was removed. The old parameters still work and map onto the new ones.
 | `GET /health` → `whisper_models`, `tts_engines` | `GET /capabilities` | The old keys are still published |
 | Six-stage progress | Ten stages, optional ones skip | `progress` counts planned stages only |
 
-Three behaviours changed deliberately:
+Current behavior differs from the original pipeline in three areas:
 
-- **Alignment is on by default.** Generated speech is fitted to its window; the
-  previous pipeline measured the duration and ignored it.
-- **Language support is enforced.** Combinations that used to fail deep inside a
-  stage — `mms` with Japanese, `edge` with Norwegian or Tagalog — are refused at
-  job creation.
-- **Voice cloning was removed.** No engine in this build clones a voice, so
-  `enable_voice_cloning` is ignored and the `voice_references` stage is gone.
+- Alignment is enabled by default. Generated speech is fitted to its original
+  time window.
+- Language support is validated when a job is created. Unsupported combinations,
+  such as `mms` with Japanese, are rejected before processing begins.
+- Voice cloning is not available. `enable_voice_cloning` is ignored, and the
+  `voice_references` stage is no longer part of the pipeline.
 
 ---
 
@@ -593,10 +567,8 @@ with stand-in models and real FFmpeg.
 
 ### Contract check
 
-`scripts/check_contract.py` fails when the frontend, the local API, the n8n form
-and the registry disagree — for example if the web UI stops reading
-`/capabilities`, the local API grows its own model list, or the n8n form offers
-an id the registry does not define.
+`scripts/check_contract.py` verifies that the frontend, local API, n8n form, and
+provider registry use the same models and pipeline stages.
 
 ### Make targets
 
@@ -625,7 +597,7 @@ dependency changes require a rebuild.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| UI shows **Backend out of date** | The Colab session is running an older build. Re-running the cells does not help on its own: `import` is a no-op in a live session, so the tunnel URL changes while the code does not | In Colab: **Runtime → Restart session**, then **Run all**. Then `make colab URL=… TOKEN=…`. `GET /health` reports the version actually answering |
+| UI shows **Backend out of date** | The Colab session is running an older build | In Colab, select **Runtime → Restart session**, run all cells, then run `make colab URL=… TOKEN=…` locally |
 | UI shows **No AI backend** | The tunnel URL changed or the session stopped | `make backends`, then re-point with `make colab` |
 | Local UI shows **No AI backend** | The `local-ai` container is stopped or unhealthy | `make local-restart`, then inspect `make local-logs` |
 | Local first request is slow | The selected model is downloading and loading | Watch `make local-logs`; the named cache volume preserves the download |
@@ -635,8 +607,7 @@ dependency changes require a rebuild.
 | Upload rejected: *cannot detect the spoken language* | The recogniser has no language identification | Set **Original language** explicitly instead of Detect automatically |
 | `503` *needs the '…' package* | The engine's flag is off in the notebook | Enable it in cell 1, re-run the install cell, then re-run the launch cell |
 | `503` *HF_TOKEN is not set* | pyannote's weights are gated | Accept the conditions on both pyannote model pages, paste a token into cell 1 |
-| Colab restarts the runtime after installing | Conflicting pins | Enable fewer engines — see [Dependency conflicts](#dependency-conflicts) |
-| Job fails at `synthesize` with *needs a reference sample* | Cloning is on but no reference survived | Re-run the job; avoid running several multi-speaker jobs at once |
+| Colab reports incompatible imports | An optional package replaced a pinned dependency | Disable the most recently enabled optional package, restart the runtime, and run all cells again |
 | CUDA out of memory on the n8n route | Three models resident at once | `POST /unload`, or choose a smaller checkpoint |
 
 ---
@@ -650,72 +621,40 @@ dependency changes require a rebuild.
   `speaker_confidence`.
 - Colab storage is ephemeral. A dropped session loses queued and running jobs, so
   download results promptly.
-- **The local services have no authentication.** `ai-service` publishes port 8000
+- The local services have no authentication. `ai-service` publishes port 8000
   and n8n publishes 5678, both unauthenticated. This is a demo stack; do not
   expose it to a network you do not control.
 - The n8n workflow has no retry or failure branch: a dropped tunnel stops the
   run. The web UI still reports the failing stage and its message.
-- Speaker diarization changes the transcript and the subtitles, not the audio:
-  every speaker is voiced by the same stock voice. See [Future work](#future-work).
+- With multi-voice disabled, speaker diarization does not change the generated
+  voice. With it enabled, speakers outnumbering the available Edge voices reuse
+  voices deterministically.
 
 ---
 
-## Future work
+## Development features
 
-### Voice cloning, and one voice per speaker
+### Per-speaker voices
 
-Removed rather than left half-working. Every engine that could clone a voice
-depended on `f5-tts`, which pulls `transformers` 5.x and a numpy that the rest
-of the session cannot import — translation, SeamlessM4T and the MMS voice all
-fail with:
-
-```
-ImportError: cannot import name '_slice' from 'numpy._core.umath'
-```
-
-Keeping a feature whose only implementation cannot be installed meant a stage
-that never ran, a checkbox that was always disabled, and a per-speaker
-reference cutter with nothing to feed. Those are gone.
-
-What remains is the part that still works and still matters: **diarization
-decides who owns each line**, that label survives the merge into the canonical
-segments, and it reaches the TTS request as `SpeechRequest.speaker_id`. No
-engine here reads it yet, so the dub sounds the same either way — but the
-plumbing is in place, and it is the hook either of these would use:
-
-1. **Multiple stock voices.** `edge` publishes several voices per language and
-   already declares `supports_multispeaker`. Mapping `SPEAKER_00`, `SPEAKER_01`
-   … onto different Edge voices gives one voice per speaker with **no GPU and
-   no cloning** — the cheapest way back to a multi-voice dub, and it needs
-   nothing but a provider that reads `speaker_id`.
-2. **Cloning proper.** A `reference` field on `SpeechRequest`, a stage that cuts
-   one clean clip per speaker, and an engine that accepts it. The subtle part is
-   the cutter: a clip containing two voices clones a blend of them, so it has to
-   take only the regions a speaker holds alone. That was implemented once — see
-   `exclusive_regions` in the history of `dubflow_core/segments.py` — and is
-   worth recovering rather than re-deriving.
-
-The blocker for (2) is not the code but the environment: it needs a numpy that
-satisfies both `f5-tts` and this project's pinned base, which is a session-level
-experiment rather than a change here.
+Set `DUBFLOW_MULTI_VOICE=true` locally, or `MULTI_VOICE = True` in the notebook,
+to map pyannote labels to Edge voices. The mapping is deterministic: the same
+speaker label keeps the same voice, and `job.json` records it under
+`speaker_voice_map`. This uses stock voices and does not clone the original
+speakers. F5-TTS support remains removed because its dependencies are
+incompatible with the base Colab environment.
 
 ### Lip sync
 
-Re-timing the speaker's mouth to the dubbed audio was scoped out for the same
-reason: a stage, a flag and an abstraction that never ran cost more to explain
-than they were worth.
-
-Adding it later is contained, because nothing between `mix` and `render`
-depends on the video:
+Lip synchronization is not part of the current pipeline. Adding it would
+require:
 
 1. A `lipsync` registry under `colab/providers/`, shaped like `separation/`.
 2. A `pipeline/lipsync.py` stage with an `enabled(job)`, inserted between `mix`
    and `render`, plus its slot in `STAGE_SLOTS`.
 3. A `lip_sync` flag on `Features`, and `render` reading the lip-synced video.
 
-The n8n route needs one further decision the notebook route does not: lip sync
-rewrites the video, so the whole file would cross the tunnel twice. Wav2Lip
-(non-commercial), Retalker and LatentSync are the usual starting points.
+For a remote notebook backend, the design must also account for transferring
+the video to and from the lip-sync stage.
 
 ---
 
@@ -724,17 +663,18 @@ rewrites the video, so the whole file would cross the tunnel twice. Wav2Lip
 This repository does not yet carry a licence file. Add one before publishing;
 until then, no licence is granted for the project's own source.
 
-Model weights keep their own licences, which are recorded in the registry and
-reported by `/capabilities`. They are **not** interchangeable:
+Model weights retain their own licences. The registry records these licences and
+returns them through `/capabilities`:
 
 | Licence | Models | Implication |
 |---|---|---|
 | MIT | Whisper, pyannote, Demucs | Commercial use permitted, subject to each licence |
-| CC-BY-NC-4.0 | NLLB-200, SeamlessM4T, MMS (ASR and TTS), F5-TTS | **Non-commercial only** |
-| Service terms | Edge TTS | Sends text to a Microsoft endpoint — unsuitable for confidential material |
+| CC-BY-NC-4.0 | NLLB-200, SeamlessM4T, MMS (ASR and TTS) | Non-commercial use only |
+| Service terms | Edge TTS | Sends text to a Microsoft endpoint; do not use for confidential material |
 
-**Every translation model in this build is CC-BY-NC-4.0**, so any end-to-end dub
-produced with it is non-commercial regardless of which voice was used.
+All translation models currently registered by this project use CC-BY-NC-4.0.
+Generated dubs are therefore limited to non-commercial use regardless of the
+selected voice.
 
 Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper),
 [NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M),

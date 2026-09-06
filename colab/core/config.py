@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional
 
 import providers
+from core import feature_flags
 from core.errors import InvalidRequest
 from dubflow_core import alignment as align
 from dubflow_core import languages as L
@@ -52,12 +53,14 @@ class Features:
     diarization: bool = False
     alignment: bool = True
     source_separation: bool = False
+    multi_voice: bool = False
 
     def public(self) -> Dict[str, bool]:
         return {
             "diarization": self.diarization,
             "alignment": self.alignment,
             "source_separation": self.source_separation,
+            "multi_voice": self.multi_voice,
         }
 
 
@@ -141,15 +144,31 @@ def _speakers(values: Mapping[str, Any], name: str) -> Optional[int]:
 
 def rebuild(job: Mapping[str, Any]) -> JobConfig:
     """Rebuild a stored job configuration with its detected language."""
-    config = build(job.get("request") or {})
+    stored_features = (job.get("config") or {}).get("features") or {}
+    stored_multi_voice = bool(stored_features.get("multi_voice", False))
+    if stored_multi_voice and not feature_flags.multi_voice_enabled():
+        raise InvalidRequest(
+            "This job uses multi-voice, but the AI service was restarted without "
+            "DUBFLOW_MULTI_VOICE=true. Enable the flag and restart the service."
+        )
+    config = build(
+        job.get("request") or {},
+        multi_voice=stored_multi_voice,
+    )
     detected = job.get("source_language")
     if detected:
         config.source_language = detected
     return config
 
 
-def build(values: Mapping[str, Any]) -> JobConfig:
+def build(
+    values: Mapping[str, Any],
+    *,
+    multi_voice: Optional[bool] = None,
+) -> JobConfig:
     """Validate request values and resolve each selected model."""
+    if multi_voice is None:
+        multi_voice = feature_flags.multi_voice_enabled()
     target = as_language(values.get("target_language", "vi"), "target_language")
     source = as_language(values.get("source_language"), "source_language", allow_auto=True)
 
@@ -167,8 +186,15 @@ def build(values: Mapping[str, Any]) -> JobConfig:
     tts_spec = providers.find(
         "tts",
         _first(values, "tts_provider"),
-        _first(values, "tts_model", "tts_engine") or providers.DEFAULTS["tts"],
+        _first(values, "tts_model", "tts_engine")
+        or ("edge" if multi_voice else providers.DEFAULTS["tts"]),
     )
+
+    if multi_voice and not tts_spec.supports_multispeaker:
+        raise InvalidRequest(
+            "Multi-voice mode requires a TTS model with multi-speaker support. "
+            "Choose Edge TTS, or start without DUBFLOW_MULTI_VOICE=true."
+        )
 
     # Report language mismatches before missing optional packages.
     if source is None and not asr_spec.supports_language_detection:
@@ -193,9 +219,10 @@ def build(values: Mapping[str, Any]) -> JobConfig:
         providers.registry(task).require_available(spec)
 
     features = Features(
-        diarization=as_bool(values.get("enable_diarization"), False),
+        diarization=multi_voice or as_bool(values.get("enable_diarization"), False),
         alignment=as_bool(values.get("enable_alignment"), True),
         source_separation=as_bool(values.get("enable_source_separation"), False),
+        multi_voice=multi_voice,
     )
 
     diarization_spec = None

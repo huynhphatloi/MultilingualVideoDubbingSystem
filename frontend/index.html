@@ -929,6 +929,10 @@
         if (task === "translation") {
           return speaks(model, target) && (!source || speaks(model, source));
         }
+        if (task === "tts"
+            && capabilities.feature_flags
+            && capabilities.feature_flags.multi_voice
+            && !model.supports_multispeaker) return false;
         return speaks(model, target);
       });
     }
@@ -977,12 +981,20 @@
 
     function refreshOptions() {
       const diarization = modelsOf("diarization").filter(model => model.available);
+      const multiVoice = Boolean(
+        capabilities && capabilities.feature_flags && capabilities.feature_flags.multi_voice
+      );
       optionState(
         "diarization",
-        diarization.length > 0,
-        diarization.length
-          ? "One voice per speaker"
-          : "pyannote is not installed on this backend"
+        multiVoice ? false : diarization.length > 0,
+        multiVoice
+          ? (diarization.length
+              ? "Required by multi-voice development mode"
+              : "Multi-voice needs pyannote and HF_TOKEN")
+          : (diarization.length
+              ? "Identify speakers in the transcript"
+              : "pyannote is not installed on this backend"),
+        multiVoice ? true : undefined
       );
 
       const separation = modelsOf("separation").filter(model => model.available);
@@ -1006,6 +1018,12 @@
       if (!asrModel) missing.push("speech recognition");
       if (!translationModel) missing.push("translation");
       if (!ttsModel) missing.push("a voice");
+      const multiVoice = Boolean(
+        capabilities && capabilities.feature_flags && capabilities.feature_flags.multi_voice
+      );
+      if (multiVoice && !modelsOf("diarization").some(model => model.available)) {
+        missing.push("speaker diarization");
+      }
       const blocked = missing.length > 0;
       if (blocked && capabilities && capabilities.available) {
         targetNote.className = "field-note";
@@ -1054,7 +1072,10 @@
         setBusy(true, outdated ? "Re-run the notebook" : "AI backend offline");
         submitButton.disabled = true;
       } else {
-        backendBadge.textContent = `Backend: ${capabilities.ai_backend || "ready"} · ${capabilities.device || "cpu"}`;
+        const development = capabilities.feature_flags && capabilities.feature_flags.multi_voice
+          ? " · multi-voice dev"
+          : "";
+        backendBadge.textContent = `Backend: ${capabilities.ai_backend || "ready"} · ${capabilities.device || "cpu"}${development}`;
         showBanner("");
         submitButton.disabled = false;
       }
@@ -1216,6 +1237,7 @@
       const features = job.features || {};
       const tags = [];
       if (features.diarization) tags.push(["diarize", ""]);
+      if (features.multi_voice) tags.push(["multi-voice", ""]);
       if (features.source_separation) tags.push(["separate", ""]);
       if (features.alignment === false) tags.push(["no align", "off"]);
       return tags.map(([name, tone]) =>

@@ -781,6 +781,9 @@ def synthesize(request: JobRequest) -> dict:
                 "provider": choice.get("provider", ""),
                 "model": choice.get("model", ""),
             }
+            if _features(job).get("multi_voice"):
+                data["speaker_id"] = segment.get("speaker_id") or ""
+                data["multi_voice"] = "true"
             response = _colab_request("/synthesize", data=data)
             output = output_dir / f"{segment['id']:04d}.wav"
             output.write_bytes(response.content)
@@ -791,6 +794,12 @@ def synthesize(request: JobRequest) -> dict:
             segment["tts_duration_raw"] = round(_duration(output), 3)
             segment["tts_duration"] = segment["tts_duration_raw"]
             segment["tts_model"] = model_name
+            voice = response.headers.get("x-tts-voice")
+            if voice:
+                segment["tts_voice"] = voice
+                speaker = segment.get("speaker_id")
+                if speaker:
+                    job.setdefault("speaker_voice_map", {})[speaker] = voice
             models[model_name] = models.get(model_name, 0) + 1
         backend = _resolve_backend()
         job["tts_provider"] = backend[0] if backend else "unknown"
@@ -805,6 +814,7 @@ def synthesize(request: JobRequest) -> dict:
         "requested_engine": (job["config"].get("tts") or {}).get("model"),
         "provider": job["tts_provider"],
         "models_used": job.get("models_used"),
+        "speaker_voice_map": job.get("speaker_voice_map"),
     }
 
 
@@ -1023,6 +1033,7 @@ def _summary(job: dict, folder: Optional[Path] = None) -> dict:
         "translation_model": (config.get("translation") or {}).get("model"),
         "tts_model": (config.get("tts") or {}).get("model"),
         "features": config.get("features") or {},
+        "speaker_voice_map": job.get("speaker_voice_map"),
         "segments": len(job.get("segments") or []),
         "created_at": job.get("created_at"),
         "finished_at": job.get("finished_at"),
