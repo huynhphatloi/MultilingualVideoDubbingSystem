@@ -10,7 +10,7 @@ Inference can run locally with Docker or remotely in a Google Colab GPU session.
 | **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · optional Google Colab |
 | **Models** | 16 ASR · 3 translation · 2 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
-| **Tests** | 151, no GPU and no model download required |
+| **Tests** | 154, no GPU and no model download required |
 | **Status** | Reference implementation for development and demonstrations; see [Limitations](#limitations) |
 
 ---
@@ -207,7 +207,7 @@ local-ai-service/        Docker image for running the Colab API locally
 frontend/index.html      Single-file web UI, reads /capabilities
 n8n/workflows/           The visual pipeline
 scripts/                 check_contract.py, set_backend.py
-tests/                   151 tests, no GPU required
+tests/                   154 tests, no GPU required
 ```
 
 ### Pipeline stages

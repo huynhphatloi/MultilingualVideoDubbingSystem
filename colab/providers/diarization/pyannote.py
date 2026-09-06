@@ -1,6 +1,7 @@
-"""pyannote.audio 3.1."""
+"""pyannote speaker diarization."""
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -32,9 +33,15 @@ class PyannoteProvider(DiarizationProvider):
         super().__init__(spec)
         from pyannote.audio import Pipeline
 
+        parameters = inspect.signature(Pipeline.from_pretrained).parameters
+        auth = (
+            {"use_auth_token": _token()}
+            if "use_auth_token" in parameters and "token" not in parameters
+            else {"token": _token()}
+        )
         pipeline = Pipeline.from_pretrained(
             spec.repo_id or "pyannote/speaker-diarization-3.1",
-            use_auth_token=_token(),
+            **auth,
         )
         if pipeline is None:
             raise ProviderFailure(
@@ -58,7 +65,10 @@ class PyannoteProvider(DiarizationProvider):
             arguments["min_speakers"] = int(min_speakers)
         if max_speakers:
             arguments["max_speakers"] = int(max_speakers)
-        annotation = self.pipeline(str(audio), **arguments)
+        result = self.pipeline(str(audio), **arguments)
+        annotation = getattr(result, "exclusive_speaker_diarization", None)
+        if annotation is None:
+            annotation = getattr(result, "speaker_diarization", result)
         turns = [
             {"speaker_id": str(speaker), "start": float(turn.start), "end": float(turn.end)}
             for turn, _, speaker in annotation.itertracks(yield_label=True)
