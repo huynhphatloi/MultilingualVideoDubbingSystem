@@ -1,9 +1,11 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
+COMPOSE_LOCAL := $(COMPOSE) -f docker-compose.yml -f docker-compose.local.yml
+COMPOSE_LOCAL_GPU := $(COMPOSE_LOCAL) -f docker-compose.local-gpu.yml
 WORKFLOW_JSON := n8n/workflows/simple-dubbing.json
 WORKFLOW_ID := $(shell python3 -c "import json;print(json.load(open('$(WORKFLOW_JSON)'))['id'])" 2>/dev/null)
 
-.PHONY: start env import activate stop restart colab kaggle backends logs status check test
+.PHONY: start local local-gpu local-restart local-gpu-restart local-logs local-stop env import activate stop restart colab kaggle backends logs status check test
 
 start: env ## Build and start n8n + the AI service, then import and activate the workflow
 	$(COMPOSE) up -d --build --wait
@@ -13,13 +15,42 @@ start: env ## Build and start n8n + the AI service, then import and activate the
 	@echo "Demo app:  http://localhost:8000"
 	@echo "Pipeline:  http://localhost:5678"
 
+local: env ## Run the complete stack locally on CPU; model weights load on first use
+	$(COMPOSE_LOCAL) up -d --build --wait
+	$(COMPOSE_LOCAL) exec n8n n8n import:workflow --input=/workflows/simple-dubbing.json
+	@$(MAKE) --no-print-directory activate COMPOSE="$(COMPOSE_LOCAL)"
+	@echo
+	@echo "Demo app:       http://localhost:8000"
+	@echo "Local AI docs:  http://localhost:$${LOCAL_AI_PORT:-8001}/docs"
+	@echo "Pipeline:       http://localhost:5678"
+
+local-gpu: env ## Run locally with an NVIDIA GPU and the CUDA PyTorch wheel
+	$(COMPOSE_LOCAL_GPU) up -d --build --wait
+	$(COMPOSE_LOCAL_GPU) exec n8n n8n import:workflow --input=/workflows/simple-dubbing.json
+	@$(MAKE) --no-print-directory activate COMPOSE="$(COMPOSE_LOCAL_GPU)"
+	@echo
+	@echo "Demo app:       http://localhost:8000"
+	@echo "Local AI docs:  http://localhost:$${LOCAL_AI_PORT:-8001}/docs"
+	@echo "Pipeline:       http://localhost:5678"
+
+local-restart: ## Restart the local model service and API after code/config changes
+	@$(COMPOSE_LOCAL) up -d --build --force-recreate --wait local-ai ai-service
+
+local-gpu-restart: ## Restart local inference while retaining NVIDIA GPU access
+	@$(COMPOSE_LOCAL_GPU) up -d --build --force-recreate --wait local-ai ai-service
+
+local-logs: ## Follow local model, API and n8n logs
+	$(COMPOSE_LOCAL) logs -f --tail=100 local-ai ai-service n8n
+
+local-stop: ## Stop the complete local stack but keep jobs and downloaded models
+	$(COMPOSE_LOCAL) down
+
 env: .env ## Create .env from .env.example on first run
 
 .env:
 	@cp .env.example .env
 	@echo "Created .env from .env.example."
-	@echo "Paste COLAB_API_URL and COLAB_API_TOKEN from the Colab notebook,"
-	@echo "then run 'make restart'. Uploads fail until they are set."
+	@echo "Run 'make local' for local inference, or configure a notebook backend."
 
 import: ## Re-import the workflow JSON after editing it
 	$(COMPOSE) exec n8n n8n import:workflow --input=/workflows/simple-dubbing.json
@@ -72,4 +103,6 @@ check: test ## Offline syntax/configuration checks; does not download models
 	@python3 -m json.tool colab/ai_service.ipynb >/dev/null
 	@python3 scripts/check_contract.py
 	@$(COMPOSE) config --quiet
+	@$(COMPOSE_LOCAL) config --quiet
+	@$(COMPOSE_LOCAL_GPU) config --quiet
 	@echo "checks passed"

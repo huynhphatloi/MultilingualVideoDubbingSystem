@@ -1,6 +1,10 @@
 *
 !ai-service/
 !ai-service/**
+!local-ai-service/
+!local-ai-service/**
+!colab/
+!colab/**
 !frontend/
 !frontend/**
 # Shared with the Colab service: the language table, segment schema and

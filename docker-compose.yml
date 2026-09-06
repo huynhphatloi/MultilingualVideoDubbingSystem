@@ -11,6 +11,8 @@ services:
       COLAB_API_TOKEN: ${COLAB_API_TOKEN:-}
       KAGGLE_API_URL: ${KAGGLE_API_URL:-}
       KAGGLE_API_TOKEN: ${KAGGLE_API_TOKEN:-}
+      LOCAL_API_URL: ${LOCAL_API_URL:-}
+      LOCAL_API_TOKEN: ${LOCAL_API_TOKEN:-}
       COLAB_API_TIMEOUT: ${COLAB_API_TIMEOUT:-1800}
       N8N_WEBHOOK_URL: http://n8n:5678/webhook/dubbing/start
     volumes:

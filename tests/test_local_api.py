@@ -273,3 +273,185 @@ def test_rejected_containers(service):
         data={"target_language": "vi"},
     )
     assert response.status_code == 400
+
+
+# ==========================================================================
+# Job history
+# ==========================================================================
+@ffmpeg
+def test_the_history_starts_empty_and_then_lists_the_upload(service):
+    """The browser used to hold the only record of a job id, so a reload lost
+    the run and a second upload replaced the first in the panel."""
+    client, _, tmp_path = service
+    assert client.get("/jobs").json() == {"jobs": [], "total": 0}
+
+    job_id = upload(client, tmp_path)
+    payload = client.get("/jobs").json()
+    assert payload["total"] == 1
+    row = payload["jobs"][0]
+    assert row["job_id"] == job_id
+    assert row["source_filename"] == "source.mp4"
+    assert row["target_language"] == "vi"
+    assert row["created_at"], "a history list has to be orderable by more than mtime"
+    assert row["progress"] == "1/12", "upload is the one stage that has run"
+    assert row["download_url"] is None, "nothing is rendered yet"
+
+
+@ffmpeg
+def test_the_newest_job_is_listed_first(service):
+    client, _, tmp_path = service
+    first = upload(client, tmp_path)
+    second = upload(client, tmp_path)
+    listed = [row["job_id"] for row in client.get("/jobs").json()["jobs"]]
+    assert listed[0] == second and first in listed
+
+
+@ffmpeg
+def test_progress_follows_the_stages_that_ran(service):
+    client, _, tmp_path = service
+    job_id = upload(client, tmp_path)
+    stage(client, "extract", job_id)
+    stage(client, "diarize", job_id)  # optional, off for this job: skips itself
+
+    row = next(r for r in client.get("/jobs").json()["jobs"] if r["job_id"] == job_id)
+    assert "extract" in row["completed_stages"]
+    assert "diarize" in row["skipped_stages"]
+    # A skipped stage leaves the denominator, so the bar cannot exceed itself.
+    assert row["progress"] == "2/11"
+    assert 0 < row["percent"] <= 100
+
+
+@ffmpeg
+def test_a_failed_job_keeps_its_reason_in_the_list(service, monkeypatch):
+    import app
+
+    client, _, tmp_path = service
+    job_id = upload(client, tmp_path)
+    monkeypatch.setattr(app, "_run", lambda command: (_ for _ in ()).throw(RuntimeError("ffmpeg died")))
+    client.post("/stages/extract", json={"job_id": job_id})
+
+    row = next(r for r in client.get("/jobs").json()["jobs"] if r["job_id"] == job_id)
+    assert row["status"] == "failed"
+    assert row["error"]["stage"] == "extract"
+    assert row["finished_at"], "a finished job is stamped whether it worked or not"
+
+
+def test_an_unreadable_folder_does_not_hide_the_rest(service, tmp_path):
+    """An upload interrupted midway leaves a folder without a usable manifest.
+    One of those must not take the whole history down with it."""
+    client, _, _ = service
+    (tmp_path / "abcdef123456").mkdir()
+    (tmp_path / "abcdef123456" / "job.json").write_text("{ not json", encoding="utf-8")
+    assert client.get("/jobs").json() == {"jobs": [], "total": 0}
+
+
+@ffmpeg
+def test_deleting_a_job_removes_it_and_its_files(service):
+    client, _, tmp_path = service
+    job_id = upload(client, tmp_path)
+    assert (tmp_path / job_id).exists()
+
+    assert client.delete(f"/jobs/{job_id}").json()["deleted"] is True
+    assert not (tmp_path / job_id).exists()
+    assert client.get("/jobs").json()["total"] == 0
+    assert client.get(f"/jobs/{job_id}").status_code == 404
+
+
+# ==========================================================================
+# Resuming a failed job
+# ==========================================================================
+@ffmpeg
+def test_a_finished_stage_is_reused_instead_of_re_run(service, monkeypatch):
+    """Transcription is the expensive stage. Re-running the workflow must not
+    pay for it twice just because a later stage failed."""
+    import app
+
+    client, calls, tmp_path = service
+    job_id = upload(client, tmp_path)
+    stage(client, "extract", job_id)
+    stage(client, "transcribe", job_id)
+    before = len([call for call in calls if call[0] == "/transcribe"])
+    assert before == 1
+
+    again = client.post("/stages/transcribe", json={"job_id": job_id}).json()
+    assert again["reused"] is True
+    assert again["status"] == "completed"
+    after = len([call for call in calls if call[0] == "/transcribe"])
+    assert after == before, "the backend must not be called again"
+
+
+@ffmpeg
+def test_force_re_runs_a_finished_stage(service):
+    """Changing a model is a reason to run a stage again on purpose."""
+    client, calls, tmp_path = service
+    job_id = upload(client, tmp_path)
+    stage(client, "extract", job_id)
+    stage(client, "transcribe", job_id)
+
+    response = client.post(
+        "/stages/transcribe", json={"job_id": job_id, "force": True}
+    ).json()
+    assert response.get("reused") is None
+    assert len([call for call in calls if call[0] == "/transcribe"]) == 2
+
+
+@ffmpeg
+def test_a_failed_job_resumes_at_the_stage_that_stopped(service, monkeypatch):
+    import app
+
+    client, calls, tmp_path = service
+    job_id = upload(client, tmp_path)
+    stage(client, "extract", job_id)
+    stage(client, "transcribe", job_id)
+    stage(client, "merge_segments", job_id)
+
+    # Translate fails the way the real one did: a 500 from the AI backend.
+    real = app._stage_call
+
+    def broken(path, **kwargs):  # noqa: ANN001, ANN003
+        if path == "/translate":
+            raise RuntimeError("AI backend returned 500")
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(app, "_stage_call", broken)
+    assert client.post("/stages/translate", json={"job_id": job_id}).status_code == 500
+    assert _load(tmp_path, job_id)["status"] == "failed"
+
+    # The operator fixes the backend and presses retry.
+    monkeypatch.setattr(app, "_stage_call", real)
+    monkeypatch.setattr(app.httpx, "post", lambda *a, **k: _Accepted())
+    started = client.post(f"/jobs/{job_id}/start").json()
+
+    assert started["status"] == "accepted"
+    assert started["resumed_from"] == "translate"
+    assert "transcribe" in started["reusing"]
+    assert "translate" not in started["reusing"], "the failed stage must run again"
+    # The job is no longer failed, and the transcript it already produced is
+    # still there - which is the whole point of resuming rather than re-uploading.
+    resumed = _load(tmp_path, job_id)
+    assert resumed["status"] == "running"
+    assert "error" not in resumed
+    assert len(resumed["segments"]) == len(SEGMENTS)
+
+
+@ffmpeg
+def test_a_completed_job_is_not_restarted_by_accident(service, monkeypatch):
+    import app
+
+    client, _, tmp_path = service
+    job_id = upload(client, tmp_path)
+    for name in ["extract", "transcribe", "merge_segments"]:
+        stage(client, name, job_id)
+    monkeypatch.setattr(app.httpx, "post", lambda *a, **k: _Accepted())
+    assert client.post(f"/jobs/{job_id}/start").json()["message"] == "Job has already started"
+
+
+class _Accepted:
+    status_code = 202
+
+    def raise_for_status(self):  # noqa: ANN201
+        return None
+
+
+def _load(root, job_id):  # noqa: ANN001, ANN202
+    return json.loads((root / job_id / "job.json").read_text(encoding="utf-8"))

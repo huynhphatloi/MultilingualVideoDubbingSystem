@@ -300,6 +300,135 @@
     .pipeline-panel .panel-kicker { color: #aeb9b3; }
     .pipeline-panel .badge { border-color: #47534d; color: var(--accent); background: #2b3731; }
 
+    /* ---- job history ------------------------------------------------ */
+    .history { margin-bottom: 18px; }
+
+    .history-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      color: #aeb9b3;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .history-toggle {
+      border: 0;
+      padding: 0;
+      color: var(--accent);
+      background: none;
+      font: inherit;
+      letter-spacing: inherit;
+      cursor: pointer;
+    }
+
+    /* Four rows before it scrolls: enough to see the run before this one
+       without pushing the stage list off the screen. */
+    .history-list { max-height: 188px; overflow-y: auto; }
+
+    .history-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      margin-bottom: 6px;
+      padding: 9px 11px;
+      border: 1px solid #36423b;
+      border-radius: 10px;
+      background: #263029;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .history-row:hover { border-color: #4d5b53; }
+    .history-row.selected { border-color: var(--accent); background: #2b3731; }
+    .history-row div { min-width: 0; }
+
+    .history-name {
+      overflow: hidden;
+      color: #f8f7f1;
+      font-size: 12px;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-sub { color: #96a29b; font-size: 11px; }
+
+    /* The configuration each run used, so two rows can be compared at a glance
+       rather than by selecting them one after the other. */
+    .history-config {
+      overflow: hidden;
+      margin-top: 2px;
+      color: #cbd5cf;
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-flag {
+      display: inline-block;
+      margin-left: 5px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      color: #b7f0d6;
+      background: #2f3d35;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .history-flag.off { color: #d7c39a; background: #3d372a; }
+
+    .history-state {
+      flex: none;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .history-state.running { color: #0d1512; background: var(--accent); }
+    .history-state.completed { color: #b7f0d6; background: #24402f; }
+    .history-state.failed { color: #ffc4bd; background: #4a2723; }
+
+    .history-delete {
+      flex: none;
+      padding: 2px 6px;
+      border: 0;
+      border-radius: 6px;
+      color: #7e8c85;
+      background: none;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .history-delete:hover { color: #ffc4bd; background: #3a2a27; }
+    .history-empty { color: #7e8c85; font-size: 11px; }
+
+    .retry {
+      display: none;
+      width: 100%;
+      margin-bottom: 16px;
+      padding: 11px 14px;
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      color: #0d1512;
+      background: var(--accent);
+      font-size: 12px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .retry.show { display: block; }
+    .retry:disabled { opacity: 0.6; cursor: progress; }
+
     .job-meta {
       display: flex;
       min-height: 34px;
@@ -445,14 +574,13 @@
 
     .field-note {
       display: block;
-      margin-top: 6px;
-      min-height: 14px;
-      color: var(--muted);
+      color: var(--error);
       font-size: 11px;
       line-height: 1.35;
     }
 
-    .field-note.warn { color: var(--error); }
+    .field-note:not(:empty) { margin-top: 6px; }
+
 
     select:disabled { color: #9aa39d; background: #f2f1ec; cursor: not-allowed; }
 
@@ -553,7 +681,6 @@
               <select id="source-language" name="source_language">
                 <option value="auto">Detect automatically</option>
               </select>
-              <span class="field-note" id="source-note"></span>
             </div>
             <div class="field">
               <label for="target-language">Dub into</label>
@@ -631,11 +758,21 @@
           <span class="badge" id="status-badge">Ready</span>
         </div>
 
+        <div class="history" id="history">
+          <div class="history-head">
+            <span>Recent jobs <span id="history-count"></span></span>
+            <button class="history-toggle" id="history-refresh" type="button">Refresh</button>
+          </div>
+          <div class="history-list" id="history-list"></div>
+        </div>
+
         <div class="job-meta">
           <span id="job-status">Waiting for a video</span>
           <span class="job-id" id="job-id">No job yet</span>
         </div>
         <div class="progress-track" aria-hidden="true"><div class="progress-bar" id="progress-bar"></div></div>
+
+        <button class="retry" id="retry-button" type="button"></button>
 
         <div class="stages" id="stages"></div>
 
@@ -692,6 +829,10 @@
     const result = document.getElementById("result");
     const resultVideo = document.getElementById("result-video");
     const stagesRoot = document.getElementById("stages");
+    const retryButton = document.getElementById("retry-button");
+    const historyList = document.getElementById("history-list");
+    const historyCount = document.getElementById("history-count");
+    const historyRefresh = document.getElementById("history-refresh");
 
     const controls = {
       asr: {
@@ -716,10 +857,19 @@
 
     let capabilities = null;
     let pollTimer = null;
+    //: The job the stage panel is showing. A run outlives the page that started
+    //: it, so this is restored from the history rather than kept only in memory.
+    let activeJob = null;
+    let pollFailed = false;
 
     function showMessage(text, tone = "") {
       message.textContent = text;
       message.className = `message show ${tone}`.trim();
+    }
+
+    function clearMessage() {
+      message.textContent = "";
+      message.className = "message";
     }
 
     function showBanner(text) {
@@ -805,20 +955,6 @@
       });
     }
 
-    function describe(model) {
-      const parts = [];
-      if (model.experimental) parts.push("experimental");
-      if (model.license && model.license !== "unknown") parts.push(model.license);
-      if (model.task === "tts") {
-        parts.push(model.supports_voice_cloning ? "clones voices" : "stock voice");
-      }
-      if (model.task === "asr" && !model.supports_timestamps) {
-        parts.push("windowed timing");
-      }
-      const head = parts.length ? parts.join(" · ") : "";
-      return model.notes ? `${head}${head ? " — " : ""}${model.notes}` : head;
-    }
-
     function fillSelector(task, keepModel) {
       const control = controls[task];
       const models = eligible(task);
@@ -846,15 +982,12 @@
       if (models.some(model => model.id === previous)) control.model.value = previous;
       control.model.disabled = models.length === 0;
 
-      if (!models.length) {
-        control.note.className = "field-note warn";
-        control.note.textContent = capabilities && capabilities.available
-          ? "No installed model covers this language pair. Install one in the notebook, or choose another language."
-          : "";
+      if (!models.length && capabilities && capabilities.available) {
+        control.note.className = "field-note";
+        control.note.textContent = "No installed model covers this language pair.";
       } else {
         control.note.className = "field-note";
-        const chosen = models.find(model => model.id === control.model.value);
-        control.note.textContent = chosen ? describe(chosen) : "";
+        control.note.textContent = "";
       }
       return models.find(model => model.id === control.model.value) || null;
     }
@@ -903,26 +1036,11 @@
       );
     }
 
-    function refreshAll() {
-      const asrModel = fillSelector("asr");
-      const translationModel = fillSelector("translation");
-      const ttsModel = fillSelector("tts");
+    function refreshAll(wanted = {}) {
+      const asrModel = fillSelector("asr", wanted.asr);
+      const translationModel = fillSelector("translation", wanted.translation);
+      const ttsModel = fillSelector("tts", wanted.tts);
       refreshOptions(ttsModel);
-
-      // Explain what "detect automatically" costs: the recognisers that load one
-      // language at a time are hidden while it is selected, rather than being
-      // offered and then failing.
-      const sourceNote = document.getElementById("source-note");
-      const shown = new Set(eligible("asr").map(model => model.provider));
-      const hidden = [];
-      for (const model of modelsOf("asr")) {
-        if (!model.available || shown.has(model.provider)) continue;
-        if (!hidden.includes(model.group.display_name)) hidden.push(model.group.display_name);
-      }
-      sourceNote.className = "field-note";
-      sourceNote.textContent = (sourceSelect.value === "auto" && hidden.length)
-        ? `Naming the language also unlocks ${hidden.join(", ")}, which load one language at a time.`
-        : "";
 
       const targetNote = document.getElementById("target-note");
       const missing = [];
@@ -931,7 +1049,7 @@
       if (!ttsModel) missing.push("a voice");
       const blocked = missing.length > 0;
       if (blocked && capabilities && capabilities.available) {
-        targetNote.className = "field-note warn";
+        targetNote.className = "field-note";
         targetNote.textContent = `No installed model provides ${missing.join(" or ")} for this pair.`;
       } else {
         targetNote.className = "field-note";
@@ -1026,12 +1144,22 @@
       progressBar.style.width = `${Math.round((counted / STAGES.length) * 100)}%`;
       jobIdLabel.textContent = `#${job.job_id}`;
 
+      // Everything before the failure is still on disk, so the offer is to
+      // resume rather than to upload the video a second time.
+      const failedAt = (job.error || {}).stage;
+      retryButton.className = job.status === "failed" ? "retry show" : "retry";
+      retryButton.disabled = false;
+      retryButton.textContent = failedAt
+        ? `Retry from "${failedAt}" — earlier stages are reused`
+        : "Retry";
+
       if (job.status === "failed") {
         statusBadge.textContent = "Failed";
         jobStatus.textContent = `${(job.error || {}).stage || "Pipeline"}: ${(job.error || {}).message || "Unknown error"}`;
         showMessage(jobStatus.textContent, "error");
         setBusy(false, "Try another video");
         clearInterval(pollTimer);
+        loadHistory();
       } else if (job.status === "completed") {
         statusBadge.textContent = "Completed";
         const speakers = (job.speakers || []).length;
@@ -1052,6 +1180,7 @@
         );
         setBusy(false, "Create another dub");
         clearInterval(pollTimer);
+        loadHistory();
       } else if (job.current_stage) {
         statusBadge.textContent = "Processing";
         jobStatus.textContent = `Running: ${job.current_stage}`;
@@ -1062,12 +1191,201 @@
     }
 
     async function pollJob(jobId) {
+      if (!jobId) return null;
       try {
-        renderJob(await readJson(await fetch(`/jobs/${jobId}`)));
+        const job = await readJson(await fetch(`/jobs/${jobId}`));
+        // A restart of the service, or a laptop waking up, drops one poll. The
+        // next one works, so the warning has to go away by itself - otherwise a
+        // finished job sits behind a stale "Failed to fetch".
+        if (pollFailed) {
+          pollFailed = false;
+          clearMessage();
+        }
+        renderJob(job);
+        return job;
       } catch (error) {
+        pollFailed = true;
         showMessage(`Could not read job progress: ${error.message}`, "error");
+        return null;
       }
     }
+
+    // ---- history -------------------------------------------------------
+    function timeAgo(stamp) {
+      if (!stamp) return "";
+      const seconds = Math.max(0, (Date.now() - new Date(stamp).getTime()) / 1000);
+      if (seconds < 60) return "just now";
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+      return `${Math.floor(seconds / 86400)}d ago`;
+    }
+
+    function historyState(job) {
+      if (job.status === "completed") return "completed";
+      if (job.status === "failed") return "failed";
+      return "running";
+    }
+
+    function renderHistory(jobs) {
+      historyCount.textContent = jobs.length ? `· ${jobs.length}` : "";
+      if (!jobs.length) {
+        historyList.innerHTML = '<p class="history-empty">No jobs yet. Upload a video to start one.</p>';
+        return;
+      }
+      historyList.innerHTML = jobs.map(job => {
+        const state = historyState(job);
+        const progress = state === "failed"
+          ? `failed at ${(job.error || {}).stage || "?"}`
+          : job.progress;
+        return `
+          <button class="history-row${job.job_id === activeJob ? " selected" : ""}"
+                  type="button" data-job="${job.job_id}">
+            <div>
+              <div class="history-name">${escapeHtml(job.source_filename || job.job_id)}</div>
+              <div class="history-config">${escapeHtml(configLine(job))}${flagTags(job)}</div>
+              <div class="history-sub">${escapeHtml(progress)} · ${timeAgo(job.created_at)}</div>
+            </div>
+            <span class="history-state ${state}">${state}</span>
+            <span class="history-delete" data-delete="${job.job_id}" title="Delete this job">&times;</span>
+          </button>`;
+      }).join("");
+    }
+
+    // What the run was configured with: the pair of languages and the three
+    // models. The source language shown is the one that was asked for, so a run
+    // on auto-detect reads as "auto" rather than as whatever it turned out to be.
+    function configLine(job) {
+      const languages =
+        `${job.requested_source_language || "auto"} → ${job.target_language || "?"}`;
+      const models = [job.asr_model, job.translation_model, job.tts_model].filter(Boolean);
+      return models.length ? `${languages} · ${models.join(" · ")}` : languages;
+    }
+
+    // Only what differs from the defaults, so a row stays readable: the three
+    // opt-in features when they are on, and alignment when it is off.
+    function flagTags(job) {
+      const features = job.features || {};
+      const tags = [];
+      if (features.diarization) tags.push(["diarize", ""]);
+      if (features.voice_cloning) tags.push(["clone", ""]);
+      if (features.source_separation) tags.push(["separate", ""]);
+      if (features.alignment === false) tags.push(["no align", "off"]);
+      return tags.map(([name, tone]) =>
+        `<span class="history-flag ${tone}">${name}</span>`).join("");
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, character => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[character]);
+    }
+
+    async function loadHistory() {
+      try {
+        const payload = await readJson(await fetch("/jobs"));
+        renderHistory(payload.jobs || []);
+        return payload.jobs || [];
+      } catch (_) {
+        return [];   // The history is a convenience; never break the run for it.
+      }
+    }
+
+    // Restoring the form is what makes a past job useful: it says what was
+    // actually run, and it is the starting point for running it again - on the
+    // same video after a fix, or on a new one with the same settings.
+    function applyJobConfig(job) {
+      const config = (job || {}).config;
+      if (!config) return false;
+
+      // config.source_language is what was ASKED for ("auto"), which is what
+      // the form should show. job.source_language is what the recogniser then
+      // detected, and putting that back would silently turn auto-detect off.
+      if (config.source_language) sourceSelect.value = config.source_language;
+      if (config.target_language) targetSelect.value = config.target_language;
+
+      // The model lists are filtered by language, so they have to be rebuilt
+      // before a stored choice can be selected in them.
+      refreshAll({
+        asr: (config.asr || {}).model,
+        translation: (config.translation || {}).model,
+        tts: (config.tts || {}).model,
+      });
+
+      // After refreshAll: refreshOptions forces the boxes an engine decides for
+      // itself, and those must win over the stored value.
+      const features = config.features || {};
+      for (const [name, box] of Object.entries(toggles)) {
+        if (!box.disabled && typeof features[name] === "boolean") {
+          box.checked = features[name];
+        }
+      }
+      return true;
+    }
+
+    async function selectJob(jobId) {
+      activeJob = jobId;
+      resetStages();
+      clearInterval(pollTimer);
+      const job = await pollJob(jobId);
+      await loadHistory();
+      // The form is restored silently: every row already shows the settings it
+      // ran with, and the selected row is highlighted, so a toast repeating it
+      // was one more line to read.
+      if (job) applyJobConfig(job);
+      if (job && job.status !== "completed" && job.status !== "failed") {
+        setBusy(true, "Dubbing in progress…");
+        pollTimer = setInterval(tick, 2500);
+      }
+    }
+
+    async function tick() {
+      await pollJob(activeJob);
+      await loadHistory();
+    }
+
+    historyList.addEventListener("click", async event => {
+      const remove = event.target.closest("[data-delete]");
+      if (remove) {
+        event.stopPropagation();
+        const jobId = remove.dataset.delete;
+        await fetch(`/jobs/${jobId}`, { method: "DELETE" }).catch(() => {});
+        if (jobId === activeJob) {
+          clearInterval(pollTimer);
+          activeJob = null;
+          resetStages();
+          setBusy(false, "Start dubbing");
+        }
+        await loadHistory();
+        return;
+      }
+      const row = event.target.closest("[data-job]");
+      if (row) selectJob(row.dataset.job);
+    });
+
+    historyRefresh.addEventListener("click", () => loadHistory());
+
+    retryButton.addEventListener("click", async () => {
+      if (!activeJob) return;
+      retryButton.disabled = true;
+      retryButton.textContent = "Resuming…";
+      try {
+        const started = await readJson(
+          await fetch(`/jobs/${activeJob}/start`, { method: "POST" })
+        );
+        const reused = (started.reusing || []).length;
+        showMessage(
+          `Resuming at "${started.resumed_from}". ${reused} finished stage(s) reused.`,
+          "success"
+        );
+        setBusy(true, "Dubbing in progress…");
+        clearInterval(pollTimer);
+        await tick();
+        pollTimer = setInterval(tick, 2500);
+      } catch (error) {
+        retryButton.disabled = false;
+        showMessage(error.message, "error");
+      }
+    });
 
     function buildPayload() {
       const data = new FormData();
@@ -1104,7 +1422,9 @@
           method: "POST",
           body: buildPayload()
         }));
+        activeJob = upload.job_id;
         jobIdLabel.textContent = `#${upload.job_id}`;
+        loadHistory();
         document.querySelector('[data-stage="upload"]').classList.add("complete");
         document.querySelector('[data-stage="upload"] .stage-state').textContent = "Done";
         progressBar.style.width = `${Math.round(100 / STAGES.length)}%`;
@@ -1117,8 +1437,8 @@
         jobStatus.textContent = "n8n accepted the job";
         showMessage("n8n accepted the job. Processing can take several minutes.", "success");
         setBusy(true, "Dubbing in progress…");
-        await pollJob(upload.job_id);
-        pollTimer = setInterval(() => pollJob(upload.job_id), 2500);
+        await tick();
+        pollTimer = setInterval(tick, 2500);
       } catch (error) {
         showMessage(error.message, "error");
         statusBadge.textContent = "Needs attention";
@@ -1129,6 +1449,9 @@
 
     renderStageList();
     loadCapabilities();
+    // A run outlives the page that started it, so the history is loaded on
+    // open: a reload, or a second browser tab, can pick a job back up.
+    loadHistory();
   </script>
 </body>
 </html>

@@ -3,15 +3,16 @@
 A model-agnostic video dubbing pipeline. Speech recognition, translation, speech
 generation, speaker diarization and source separation are each a
 **provider** behind a capability, so any of them can be swapped from the web UI
-or the n8n form without changing the pipeline. All inference runs on a Google
-Colab GPU; nothing is downloaded onto the machine running the stack.
+or the n8n form without changing the pipeline. Inference can run in a local
+Docker service or on a Google Colab GPU. Model weights are loaded lazily and
+cached outside the container image.
 
 | | |
 |---|---|
-| **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · Google Colab |
+| **Stack** | FastAPI · n8n · FFmpeg · Docker Compose · optional Google Colab |
 | **Models** | 16 ASR · 3 translation · 4 TTS · 1 diarization · 2 separation |
 | **Languages** | 50 (ISO-639-1), coverage declared per model |
-| **Tests** | 131, no GPU and no model download required |
+| **Tests** | 146, no GPU and no model download required |
 | **Status** | Reference implementation. Demo-grade security — see [Limitations](#limitations) |
 
 ---
@@ -73,11 +74,54 @@ skipped and the pipeline continues, so one graph serves every configuration.
 
 | Requirement | Notes |
 |---|---|
-| Docker Desktop, running | Supplies n8n and FFmpeg. Nothing else is installed locally |
+| Docker Desktop, running | Supplies n8n, FFmpeg and the optional local model service |
 | `python3` ≥ 3.9 on the host | Only for `make check` and the tests |
-| A Google account with Colab GPU access | Every AI stage runs there; there is no local fallback |
+| One inference option | Local CPU, local NVIDIA GPU, or a Google Colab GPU session |
 
-### 1. Start the AI service on Colab
+### Option A: run everything locally
+
+CPU mode works on Docker Desktop, including Apple Silicon:
+
+```bash
+make local
+```
+
+On Linux or Windows with NVIDIA Container Toolkit and a supported NVIDIA GPU:
+
+```bash
+make local-gpu
+```
+
+| Service | URL |
+|---|---|
+| Web UI | <http://localhost:8000> |
+| Local AI API | <http://localhost:8001/docs> |
+| n8n workflow | <http://localhost:5678> |
+
+The image installs PyTorch, faster-whisper, Transformers and the base model
+providers. The first job downloads the selected weights into the
+`local-model-cache` Docker volume; later containers reuse them. The default
+Whisper small, NLLB-200 600M and MMS-TTS path runs without optional packages.
+On CPU, start with a 10-second clip and expect model loading and inference to be
+much slower than on a GPU.
+
+Local mode deliberately keeps optional engines out of the base image. The UI
+reports F5-TTS, pyannote and Demucs as unavailable until their packages and any
+required credentials are added. The standard local path still completes a dub
+with one stock voice, duration alignment and voice-over mixing.
+
+Useful local commands:
+
+```bash
+make local-logs          # local-ai + API + n8n
+make local-restart       # CPU mode after code/config changes
+make local-gpu-restart   # the same while retaining NVIDIA GPU access
+make local-stop          # keeps jobs and downloaded model weights
+```
+
+### Option B: run inference on Colab
+
+#### 1. Start the AI service on Colab
 
 1. Open [`colab/ai_service.ipynb`](colab/ai_service.ipynb) in Google Colab and
    select a GPU runtime.
@@ -91,7 +135,7 @@ is enough after pulling new code. A session started by an older copy of the
 notebook holds a server that cannot be stopped from the notebook — use
 **Runtime → Restart session** first.
 
-### 2. Point the local stack at that session
+#### 2. Point the local stack at that session
 
 ```bash
 make colab URL=https://your-tunnel.trycloudflare.com TOKEN=your-token
@@ -100,7 +144,7 @@ make colab URL=https://your-tunnel.trycloudflare.com TOKEN=your-token
 This writes `.env`, restarts the API and reports which backends are live. The
 tunnel URL changes every time the Colab session restarts.
 
-### 3. Start the stack
+#### 3. Start the stack
 
 ```bash
 make start
@@ -159,16 +203,19 @@ colab/                   AI service (runs on the Colab GPU)
     separation/          demucs
   pipeline/              The eleven stages and the runner
 ai-service/              Local FastAPI service: storage, FFmpeg, orchestration
+local-ai-service/        Docker image for running the Colab API locally
 frontend/index.html      Single-file web UI, reads /capabilities
 n8n/workflows/           The visual pipeline
 scripts/                 check_contract.py, set_backend.py
-tests/                   106 tests, no GPU required
+tests/                   136 tests, no GPU required
 ```
 
 ### Pipeline stages
 
-On the n8n route the FFmpeg stages run locally and only the model calls cross
-the tunnel. The notebook's own `POST /jobs` runs all eleven in Colab.
+On the n8n route the FFmpeg stages run in `ai-service`. Model calls go to the
+selected AI backend over HTTP. With `make local` that traffic stays inside the
+Docker network; with a notebook backend it crosses the tunnel. The AI backend's
+own `POST /jobs` can also run all eleven stages itself.
 
 | # | Stage | Runs on | Optional | Produces |
 |---|---|---|---|---|
@@ -326,10 +373,12 @@ Set in `.env`; `docker-compose.yml` passes them through.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AI_BACKENDS` | `colab,kaggle` | Notebook sessions to try, most preferred first |
+| `AI_BACKENDS` | `colab,kaggle` | AI backends to try, most preferred first |
 | `COLAB_API_URL` | — | Tunnel URL printed by the notebook |
 | `COLAB_API_TOKEN` | — | Bearer token printed by the notebook |
 | `KAGGLE_API_URL` / `KAGGLE_API_TOKEN` | — | Second backend slot |
+| `LOCAL_API_URL` / `LOCAL_API_TOKEN` | — | Local model service; set by the local Compose overlay |
+| `LOCAL_AI_PORT` | `8001` | Host-only port for the local model API |
 | `COLAB_API_TIMEOUT` | `1800` | Seconds allowed per backend call |
 | `ASYNC_STAGES` | `1` | Run the slow stages as notebook tasks and poll, instead of holding one long request open |
 | `TASK_POLL_INTERVAL` | `3` | Seconds between polls |
@@ -342,11 +391,11 @@ Set in `.env`; `docker-compose.yml` passes them through.
 | `N8N_WEBHOOK_URL` | `http://n8n:5678/webhook/dubbing/start` | Where `POST /jobs/{id}/start` sends the job |
 
 Each backend name `NAME` in `AI_BACKENDS` reads `NAME_API_URL` and
-`NAME_API_TOKEN`, so the default keeps the existing `COLAB_*` pair working.
+`NAME_API_TOKEN`, so the same routing works for local, Colab and Kaggle.
 Before each call the service probes `/health` in order and uses the first that
-answers. **A notebook session cannot be started from here** — neither Colab nor
-Kaggle exposes an API for that — so this fails over between sessions that are
-already running, and `make backends` reports which those are.
+answers. The local Compose overlay sets `AI_BACKENDS=local` and starts that
+service. A notebook session still requires a human to start it; `make backends`
+reports whichever configured backend is alive.
 
 ### Environment variables — AI service
 
@@ -451,10 +500,46 @@ curl -OJ "$COLAB_API_URL/jobs/<job_id>/download"
 | `GET` | `/capabilities` | The backend's catalogue, or why it is unavailable |
 | `GET` | `/health`, `/backends`, `/languages` | Status and configuration |
 | `POST` | `/jobs/upload` | Store a video and settle its configuration |
-| `POST` | `/jobs/{id}/start` | Hand the job to n8n |
+| `POST` | `/jobs/{id}/start` | Hand the job to n8n, or resume a failed job |
 | `POST` | `/stages/{stage}` | Run one stage; the eleven names are in the table above |
 | `GET` | `/jobs/{id}` | The full job manifest |
 | `GET` | `/jobs/{id}/download`, `/subtitle` | Results |
+
+### Resuming a failed job
+
+Every stage writes its result into `job.json` or the job folder before the next
+one starts, so a failure loses only the stage that failed. `POST /stages/{name}`
+therefore reports a stage that has already produced its output as `reused` and
+does not run it again:
+
+```json
+{"stage": "extract", "status": "completed", "reused": true,
+ "reason": "this stage already produced its output"}
+```
+
+`POST /jobs/{id}/start` on a failed job uses that. It clears the failure,
+forgets the record of the stage that stopped, and re-triggers the workflow —
+the finished stages wave themselves through and the run continues where it
+left off:
+
+```json
+{"status": "accepted", "resumed_from": "translate",
+ "reusing": ["upload", "extract", "transcribe", "merge_segments"]}
+```
+
+Selecting a job in the web UI's history restores the settings it ran with —
+languages, the three models and the feature flags — so a past run is the
+starting point for the next one, whether that is retrying the same video or
+running a new one the same way. The source language restored is the one that
+was *asked* for, so a job that ran on auto-detect comes back on auto-detect
+rather than pinned to whatever the recogniser happened to hear.
+
+The web UI offers this as **Retry from "…"** on a failed job. It matters most
+for transcription, which is the expensive stage: a translation failure used to
+mean uploading the video again and paying for the recogniser twice.
+
+Pass `{"job_id": "…", "force": true}` to a stage to run it again on purpose,
+which is what a caller wants after changing a model.
 
 ### Canonical segment
 
@@ -530,6 +615,9 @@ an id the registry does not define.
 | Target | Effect |
 |---|---|
 | `make start` | Build, start, import and activate the workflow |
+| `make local` | Run the complete stack with local CPU inference |
+| `make local-gpu` | Run the complete stack with NVIDIA GPU inference |
+| `make local-logs` / `make local-stop` | Follow local logs, or stop while retaining caches |
 | `make colab URL=… TOKEN=…` | Point the stack at a Colab session |
 | `make kaggle URL=… TOKEN=…` | The same for the second backend slot |
 | `make backends` | Which notebook sessions are alive |
@@ -551,6 +639,9 @@ dependency changes require a rebuild.
 |---|---|---|
 | UI shows **Backend out of date** | The Colab session is running an older build. Re-running the cells does not help on its own: `import` is a no-op in a live session, so the tunnel URL changes while the code does not | In Colab: **Runtime → Restart session**, then **Run all**. Then `make colab URL=… TOKEN=…`. `GET /health` reports the version actually answering |
 | UI shows **No AI backend** | The tunnel URL changed or the session stopped | `make backends`, then re-point with `make colab` |
+| Local UI shows **No AI backend** | The `local-ai` container is stopped or unhealthy | `make local-restart`, then inspect `make local-logs` |
+| Local first request is slow | The selected model is downloading and loading | Watch `make local-logs`; the named cache volume preserves the download |
+| Local CPU appears stuck | Model inference is substantially slower without a GPU | Use a short clip and the default small models, or use `make local-gpu` |
 | `make start` reports auto-activation unavailable | The n8n CLI refused to activate | Open <http://localhost:5678>, open *Multilingual Dubbing*, save it, set it Active |
 | Upload rejected: *does not support target language* | The chosen engine has no such language | Pick another model; the error names working alternatives |
 | Upload rejected: *cannot detect the spoken language* | The recogniser has no language identification | Set **Original language** explicitly instead of Detect automatically |
@@ -564,8 +655,8 @@ dependency changes require a rebuild.
 
 ## Limitations
 
-- Source separation sends the full soundtrack to the notebook and downloads a
-  stem — the largest transfer in the pipeline.
+- With a notebook backend, source separation sends the full soundtrack through
+  the tunnel and downloads a stem. Local mode keeps that transfer inside Docker.
 - Segments are never split at a speaker change. An utterance where two people
   overlap is credited to whichever speaker holds most of it, recorded in
   `speaker_confidence`.

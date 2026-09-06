@@ -1,12 +1,13 @@
 """Local media API for the n8n dubbing workflow.
 
 The service still has no database, no object storage and no models of its own:
-it stores jobs, runs FFmpeg, and delegates every inference to a notebook
-backend. What changed with the provider refactor is where the model lists live.
+it stores jobs, runs FFmpeg, and delegates every inference to an AI backend.
+That backend can run in Docker on this machine or in a notebook session. What
+changed with the provider refactor is where the model lists live.
 They are no longer duplicated here - `GET /capabilities` proxies the backend's
 registry, and job configuration is validated by the same code that will run it.
-The only tables kept locally are the ones in `dubflow_core`, which the Colab
-service imports as well.
+The only tables kept here are the ones in `dubflow_core`, which every AI
+backend imports as well.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import sys
 import time
 import uuid
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -46,11 +48,9 @@ ROOT.mkdir(parents=True, exist_ok=True)
 COLAB_API_URL = os.getenv("COLAB_API_URL", "").rstrip("/")
 COLAB_API_TOKEN = os.getenv("COLAB_API_TOKEN", "")
 COLAB_API_TIMEOUT = float(os.getenv("COLAB_API_TIMEOUT", "1800"))
-#: Notebook backends to try, most preferred first. Each name NAME reads
+#: AI backends to try, most preferred first. Each name NAME reads
 #: NAME_API_URL and NAME_API_TOKEN, so the original COLAB_* pair still works
-#: untouched. Neither Colab nor Kaggle can be started from here - both need a
-#: human to press Run - so this picks a session that is already alive rather
-#: than provisioning one.
+#: untouched. A backend may be a notebook session or the local model service.
 AI_BACKENDS = [
     name.strip().lower()
     for name in os.getenv("AI_BACKENDS", "colab,kaggle").split(",")
@@ -59,11 +59,11 @@ AI_BACKENDS = [
 #: Re-probing on every segment would add a round trip per TTS call.
 BACKEND_PROBE_TTL = float(os.getenv("BACKEND_PROBE_TTL", "30"))
 BACKEND_PROBE_TIMEOUT = float(os.getenv("BACKEND_PROBE_TIMEOUT", "10"))
-#: The catalogue changes only when the notebook restarts.
+#: The catalogue changes only when the selected backend restarts.
 CAPABILITIES_TTL = float(os.getenv("CAPABILITIES_TTL", "60"))
 #: A Cloudflare quick tunnel abandons a request that has not answered in about
 #: a hundred seconds, and transcribing or separating a real video takes longer.
-#: The slow stages therefore run as background tasks on the notebook and this
+#: The slow stages therefore run as background tasks on the AI backend and this
 #: service polls, so no single request is ever long enough to be cut off.
 ASYNC_STAGES = os.getenv("ASYNC_STAGES", "1").strip().lower() not in {"0", "false", "no"}
 #: How often to ask, and how long to keep asking.
@@ -88,7 +88,7 @@ _REFERENCE_MINIMUM = 1.0
 _MAX_REFERENCE_PIECE = 8.0
 
 #: Endpoints introduced with AI service 4.0. A 404 on one of these means the
-#: notebook session is running an older build, not that the request was wrong.
+#: backend is running an older build, not that the request was wrong.
 MODERN_ENDPOINTS = ("/capabilities", "/validate", "/diarize", "/separate", "/align")
 MIN_BACKEND_VERSION = "4.0"
 
@@ -112,7 +112,7 @@ app = FastAPI(title="Multilingual Dubbing API", version="3.0")
 
 
 class OutdatedBackend(HTTPException):
-    """The notebook session answers, but predates the model registry."""
+    """The selected AI backend answers, but predates the model registry."""
 
     def __init__(self, detail: str) -> None:
         super().__init__(502, detail)
@@ -120,6 +120,8 @@ class OutdatedBackend(HTTPException):
 
 class JobRequest(BaseModel):
     job_id: str
+    #: Re-run a stage that already finished, instead of reusing its output.
+    force: bool = False
 
 
 def _job_dir(job_id: str) -> Path:
@@ -133,6 +135,13 @@ def _job_dir(job_id: str) -> Path:
 
 def _load_job(job_id: str) -> dict:
     return json.loads((_job_dir(job_id) / "job.json").read_text(encoding="utf-8"))
+
+
+def _now() -> str:
+    """Microseconds, not seconds: the history list is ordered by this, and two
+    uploads in the same second would otherwise come back in an arbitrary
+    order."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _save_job(job: dict) -> None:
@@ -159,6 +168,7 @@ def _stage(job_id: str, name: str) -> Iterator[tuple]:
         message = exc.detail if isinstance(exc, HTTPException) else str(exc)
         job["status"] = "failed"
         job["error"] = {"stage": name, "message": str(message)[:1000]}
+        job["finished_at"] = _now()
         _save_job(job)
         if isinstance(exc, HTTPException):
             raise
@@ -176,8 +186,34 @@ def _stage(job_id: str, name: str) -> Iterator[tuple]:
             job["skipped_stages"].remove(name)
         job["current_stage"] = None
         job["status"] = "completed" if name == FINAL_STAGE else "running"
+        if name == FINAL_STAGE:
+            job["finished_at"] = _now()
         job.pop("error", None)
         _save_job(job)
+
+
+def _reuse(job_id: str, name: str, force: bool) -> Optional[dict]:
+    """Report a stage that has already produced its output, unless forced.
+
+    This is what makes a failed job resumable. Every stage writes its result
+    into job.json or the job folder before the next one starts, so the work is
+    still there after a failure - re-running the workflow lets the finished
+    stages report themselves done for nothing and picks up at the one that
+    stopped. Without it, resuming meant uploading the video again and paying
+    for diarization and transcription a second time.
+
+    `force` re-runs anyway, which is what a caller wants after changing a model.
+    """
+    job = _load_job(job_id)
+    if force or name not in job.get("completed_stages", []):
+        return None
+    return {
+        "job_id": job_id,
+        "stage": name,
+        "status": "completed",
+        "reused": True,
+        "reason": "this stage already produced its output",
+    }
 
 
 def _skip(job_id: str, name: str, reason: str) -> dict:
@@ -211,7 +247,7 @@ def _duration(path: Path) -> float:
 
 
 # ==========================================================================
-# Notebook backends
+# AI backends
 # ==========================================================================
 #: The backend that answered most recently, plus when it was checked.
 _live_backend: Optional[tuple] = None
@@ -262,13 +298,19 @@ def _outdated_message(name: str, url: str, token: str, path: str) -> str:
     usually finds, and it is why the restart is spelled out.
     """
     seen = _backend_version(url, token)
+    if name == "local":
+        action = "Rebuild it with: make local-restart"
+    else:
+        action = (
+            "In Colab: Runtime > Restart session, then Run all - re-running the "
+            "cells without a restart keeps the old code loaded. Then point this "
+            "stack at the new tunnel with: make colab URL=<url> TOKEN=<token>"
+        )
     return (
         f"The '{name}' session at {url} is running AI service "
         f"{seen or 'a build older than ' + MIN_BACKEND_VERSION}, which has no "
         f"{path} endpoint. This stack needs {MIN_BACKEND_VERSION} or newer. "
-        f"In Colab: Runtime > Restart session, then Run all - re-running the "
-        f"cells without a restart keeps the old code loaded. Then point this "
-        f"stack at the new tunnel with: make colab URL=<url> TOKEN=<token>"
+        f"{action}"
     )
 
 
@@ -306,7 +348,7 @@ def _resolve_backend(force: bool = False) -> Optional[tuple]:
 
 
 def _backend_problem() -> str:
-    """One message explaining why no notebook answered, and what to do."""
+    """One message explaining why no AI backend answered, and what to do."""
     configured = _configured_backends()
     broken = _misconfigured_backends()
     if broken:
@@ -322,15 +364,16 @@ def _backend_problem() -> str:
             f"_API_TOKEN in .env, then run 'make restart'."
         )
     listed = ", ".join(f"{name} ({url})" for name, url, _ in configured)
-    return (
-        f"No configured AI backend answered /health: {listed}. Open the "
-        f"notebook, run all cells, and put the printed URL in .env. A notebook "
-        f"session cannot be started from here."
-    )
+    actions = []
+    if any(name == "local" for name, _, _ in configured):
+        actions.append("restart the local backend with 'make local-restart'")
+    if any(name != "local" for name, _, _ in configured):
+        actions.append("restart the notebook and update its URL in .env")
+    return f"No configured AI backend answered /health: {listed}. " + " or ".join(actions) + "."
 
 
 def _colab_request(path: str, method: str = "POST", **kwargs):  # noqa: ANN003, ANN202
-    """Call whichever notebook backend is alive. There is no local fallback."""
+    """Call whichever configured AI backend is alive."""
     backend = _resolve_backend()
     if backend is None:
         raise HTTPException(503, _backend_problem())
@@ -386,7 +429,7 @@ def _detail(response) -> str:  # noqa: ANN001
 
 
 def _await_task(state: dict, path: str) -> dict:
-    """Poll a notebook task until it finishes, and return what it produced.
+    """Poll an AI backend task until it finishes, and return what it produced.
 
     Each poll is its own short request, which is the whole point: the work can
     take an hour without any single connection being held open long enough for
@@ -418,7 +461,7 @@ def _await_task(state: dict, path: str) -> dict:
 
 
 def _stage_call(path: str, **kwargs) -> dict:  # noqa: ANN003
-    """Run one notebook stage, in the background when the backend supports it.
+    """Run one AI stage, in the background when the backend supports it.
 
     An older session has no /tasks route, so a 404 there means "this build is
     synchronous" rather than "the request was wrong": fall back rather than fail.
@@ -482,17 +525,13 @@ def health() -> dict:
         "ai_backend": backend[0] if backend else None,
         "ai_backend_url": backend[1] if backend else None,
         "colab_configured": bool(COLAB_API_URL),
-        "local_models": False,
+        "local_models": bool(backend) and backend[0] == "local",
     }
 
 
 @app.get("/backends")
 def backends() -> dict:
-    """Which notebook sessions are alive right now, in preference order.
-
-    Neither Colab nor Kaggle can be started from here, so this reports what is
-    already running instead of trying to bring a session up.
-    """
+    """Which configured AI backends are alive, in preference order."""
     configured = _configured_backends()
     live = _resolve_backend(force=True)
     return {
@@ -522,7 +561,7 @@ def capabilities() -> dict:
     """The backend's model registry, verbatim.
 
     The frontend reads this instead of holding its own copy of the model lists.
-    When no notebook is running it answers with `available: false` and the same
+    When no backend is running it answers with `available: false` and the same
     hint /backends gives, so the UI can explain itself rather than showing an
     empty form.
     """
@@ -595,6 +634,8 @@ async def upload_video(request: Request, file: UploadFile = File(...)) -> dict:
         "current_stage": None,
         "completed_stages": ["upload"],
         "skipped_stages": [],
+        "created_at": _now(),
+        "finished_at": None,
         "source_filename": file.filename,
         "config": config,
         "request": values,
@@ -627,6 +668,9 @@ async def upload_video(request: Request, file: UploadFile = File(...)) -> dict:
 # ==========================================================================
 @app.post("/stages/extract")
 def extract_audio(request: JobRequest) -> dict:
+    reused = _reuse(request.job_id, "extract", request.force)
+    if reused:
+        return reused
     with _stage(request.job_id, "extract") as (job, folder):
         video = folder / job["files"]["input"]
         original = folder / "original.wav"
@@ -652,6 +696,9 @@ def extract_audio(request: JobRequest) -> dict:
 @app.post("/stages/diarize")
 def diarize(request: JobRequest) -> dict:
     """Who spoke when. Skipped unless the job asked for it."""
+    reused = _reuse(request.job_id, "diarize", request.force)
+    if reused:
+        return reused
     job = _load_job(request.job_id)
     if not _features(job).get("diarization"):
         return _skip(request.job_id, "diarize", "diarization is off for this job")
@@ -691,6 +738,9 @@ def diarize(request: JobRequest) -> dict:
 
 @app.post("/stages/transcribe")
 def transcribe(request: JobRequest) -> dict:
+    reused = _reuse(request.job_id, "transcribe", request.force)
+    if reused:
+        return reused
     with _stage(request.job_id, "transcribe") as (job, folder):
         audio = folder / job["files"]["asr_audio"]
         choice = job["config"].get("asr") or {}
@@ -735,6 +785,9 @@ def transcribe(request: JobRequest) -> dict:
 @app.post("/stages/merge_segments")
 def merge_segments(request: JobRequest) -> dict:
     """Give every segment a speaker. Pure local logic, shared with Colab."""
+    reused = _reuse(request.job_id, "merge_segments", request.force)
+    if reused:
+        return reused
     with _stage(request.job_id, "merge_segments") as (job, folder):
         segments = segment_tools.renumber(
             segment_tools.assign_speakers(job.get("segments", []), job.get("turns") or [])
@@ -756,6 +809,9 @@ def merge_segments(request: JobRequest) -> dict:
 
 @app.post("/stages/translate")
 def translate(request: JobRequest) -> dict:
+    reused = _reuse(request.job_id, "translate", request.force)
+    if reused:
+        return reused
     with _stage(request.job_id, "translate") as (job, folder):
         source = job["source_language"]
         target = job["config"]["target_language"]
@@ -832,6 +888,9 @@ def voice_references(request: JobRequest) -> dict:
     single clip from the top of the video, so a two-person conversation keeps
     two voices.
     """
+    reused = _reuse(request.job_id, "voice_references", request.force)
+    if reused:
+        return reused
     job = _load_job(request.job_id)
     if not _features(job).get("voice_cloning"):
         return _skip(request.job_id, "voice_references", "voice cloning is off for this job")
@@ -926,6 +985,9 @@ def voice_references(request: JobRequest) -> dict:
 
 @app.post("/stages/synthesize")
 def synthesize(request: JobRequest) -> dict:
+    reused = _reuse(request.job_id, "synthesize", request.force)
+    if reused:
+        return reused
     with _stage(request.job_id, "synthesize") as (job, folder):
         target = job["config"]["target_language"]
         choice = job["config"].get("tts") or {}
@@ -961,7 +1023,8 @@ def synthesize(request: JobRequest) -> dict:
             segment["tts_duration"] = segment["tts_duration_raw"]
             segment["tts_model"] = model_name
             models[model_name] = models.get(model_name, 0) + 1
-        job["tts_provider"] = "colab"
+        backend = _resolve_backend()
+        job["tts_provider"] = backend[0] if backend else "unknown"
         job["models_used"] = models
 
     generated = sum(1 for segment in job["segments"] if segment.get("tts_file"))
@@ -985,6 +1048,9 @@ def align_speech(request: JobRequest) -> dict:
     The arithmetic is `dubflow_core.alignment`, the same module the Colab
     pipeline uses, so no audio has to cross the tunnel for this.
     """
+    reused = _reuse(request.job_id, "align", request.force)
+    if reused:
+        return reused
     job = _load_job(request.job_id)
     if not _features(job).get("alignment"):
         return _skip(request.job_id, "align", "alignment is off for this job")
@@ -1027,6 +1093,9 @@ def align_speech(request: JobRequest) -> dict:
 @app.post("/stages/separate")
 def separate(request: JobRequest) -> dict:
     """Replace the original track with its background stem. Optional."""
+    reused = _reuse(request.job_id, "separate", request.force)
+    if reused:
+        return reused
     job = _load_job(request.job_id)
     if not _features(job).get("source_separation"):
         return _skip(request.job_id, "separate", "source separation is off for this job")
@@ -1071,6 +1140,9 @@ def separate(request: JobRequest) -> dict:
 
 @app.post("/stages/mix")
 def mix(request: JobRequest) -> dict:
+    reused = _reuse(request.job_id, "mix", request.force)
+    if reused:
+        return reused
     with _stage(request.job_id, "mix") as (job, folder):
         voiced = segment_tools.voiced(job["segments"])
         if not voiced:
@@ -1118,6 +1190,9 @@ def mix(request: JobRequest) -> dict:
 
 @app.post("/stages/render")
 def render(request: JobRequest) -> dict:
+    reused = _reuse(request.job_id, "render", request.force)
+    if reused:
+        return reused
     with _stage(request.job_id, "render") as (job, folder):
         files = job["files"]
         video = folder / files["input"]
@@ -1156,22 +1231,120 @@ def render(request: JobRequest) -> dict:
 # ==========================================================================
 # Job access
 # ==========================================================================
+#: A history list is a summary, not the manifest: one job carries every segment
+#: it produced, and a page of those would be megabytes of text nobody renders.
+JOBS_PAGE = 50
+
+
+def _summary(job: dict) -> dict:
+    """One row of the history list."""
+    planned = [name for name in ["upload", *STAGES] if name not in job.get("skipped_stages", [])]
+    done = [name for name in job.get("completed_stages", []) if name in planned]
+    config = job.get("config") or {}
+    return {
+        "job_id": job["job_id"],
+        "status": job.get("status"),
+        "current_stage": job.get("current_stage"),
+        "completed_stages": job.get("completed_stages", []),
+        "skipped_stages": job.get("skipped_stages", []),
+        "progress": f"{len(done)}/{len(planned)}",
+        "percent": round(100 * len(done) / max(1, len(planned))),
+        "source_filename": job.get("source_filename"),
+        # Two different things, and the history needs the first: what the run
+        # was configured with ("auto"), not what the recogniser then heard.
+        "requested_source_language": config.get("source_language"),
+        "source_language": job.get("source_language"),
+        "target_language": job.get("target_language") or config.get("target_language"),
+        # The three models and the flags, so the history reads as a comparison
+        # of what each run was actually configured with.
+        "asr_model": (config.get("asr") or {}).get("model"),
+        "translation_model": (config.get("translation") or {}).get("model"),
+        "tts_model": (config.get("tts") or {}).get("model"),
+        "features": config.get("features") or {},
+        "segments": len(job.get("segments") or []),
+        "created_at": job.get("created_at"),
+        "finished_at": job.get("finished_at"),
+        "error": job.get("error"),
+        "download_url": f"/jobs/{job['job_id']}/download"
+        if (job.get("files") or {}).get("output") else None,
+        "subtitle_url": f"/jobs/{job['job_id']}/subtitle"
+        if (job.get("files") or {}).get("subtitle") else None,
+    }
+
+
+@app.get("/jobs")
+def list_jobs(limit: int = JOBS_PAGE) -> dict:
+    """Every job this service still holds, newest first.
+
+    The UI polls this to follow more than one job at a time: the browser used to
+    keep the only record of a job id, so a reload lost the run and a second
+    upload replaced the first in the panel.
+
+    A folder without a readable job.json is skipped rather than failing the
+    whole list - an upload interrupted midway should not hide the history.
+    """
+    rows = []
+    for folder in ROOT.iterdir():
+        if not folder.is_dir():
+            continue
+        manifest = folder / "job.json"
+        if not manifest.exists():
+            continue
+        try:
+            rows.append(_summary(json.loads(manifest.read_text(encoding="utf-8"))))
+        except (ValueError, KeyError):
+            continue
+    # created_at is absent on jobs written before it existed; those sort last
+    # rather than crashing. job_id breaks any remaining tie so the order is at
+    # least stable between two calls.
+    rows.sort(key=lambda row: (row.get("created_at") or "", row["job_id"]), reverse=True)
+    return {"jobs": rows[: max(1, min(limit, 200))], "total": len(rows)}
+
+
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str) -> dict:
     return _load_job(job_id)
 
 
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str) -> dict:
+    """Remove a job and everything it produced.
+
+    Nothing prunes this directory on its own - a job keeps its source video,
+    every generated clip and the rendered result - so the history needs a way
+    to let one go.
+    """
+    folder = _job_dir(job_id)
+    shutil.rmtree(folder, ignore_errors=True)
+    return {"job_id": job_id, "deleted": True}
+
+
 @app.post("/jobs/{job_id}/start", status_code=202)
 def start_job(job_id: str) -> dict:
-    """Ask n8n to orchestrate the stages after upload."""
+    """Ask n8n to orchestrate the stages after upload.
+
+    A failed job may be started again: the stages that already produced their
+    output report themselves reused and cost nothing, so the run continues from
+    the one that stopped rather than from the video.
+    """
     job = _load_job(job_id)
     completed = job.get("completed_stages", [])
-    if job.get("status") == "completed" or len(completed) > 1:
+    resuming = job.get("status") == "failed"
+    if not resuming and (job.get("status") == "completed" or len(completed) > 1):
         return {
             "job_id": job_id,
             "status": job.get("status", "running"),
             "message": "Job has already started",
         }
+    failed_stage = (job.get("error") or {}).get("stage") if resuming else None
+    if resuming:
+        # The stage that failed has to run again, so its record of failure goes
+        # first - otherwise the reuse guard would wave it through.
+        if failed_stage in completed:
+            completed.remove(failed_stage)
+        job["status"] = "running"
+        job.pop("error", None)
+        _save_job(job)
 
     try:
         response = httpx.post(N8N_WEBHOOK_URL, json={"job_id": job_id}, timeout=30)
@@ -1184,7 +1357,13 @@ def start_job(job_id: str) -> dict:
             f"Technical detail: {str(exc)[:300]}",
         ) from exc
 
-    return {"job_id": job_id, "status": "accepted", "orchestrator": "n8n"}
+    return {
+        "job_id": job_id,
+        "status": "accepted",
+        "orchestrator": "n8n",
+        "resumed_from": failed_stage,
+        "reusing": completed if resuming else [],
+    }
 
 
 @app.get("/jobs/{job_id}/download")
