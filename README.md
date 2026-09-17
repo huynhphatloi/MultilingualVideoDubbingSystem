@@ -343,6 +343,10 @@ incompatible imports before starting the API. `/capabilities` reports whether
 the required models and credentials are available, and the web UI blocks a job
 before upload if diarization cannot run.
 
+The legacy `speaker-diarization-3.1` pipeline is pinned to `pyannote.audio`
+3.4.0 with the matching PyTorch/TorchAudio 2.8.0 pair. TorchAudio 2.9 removed
+the `AudioMetaData` API that this pyannote release imports.
+
 ### Environment variables — local stack
 
 Set in `.env`; `docker-compose.yml` passes them through.
@@ -575,6 +579,7 @@ dependency changes require a rebuild.
 | Upload rejected: *cannot detect the spoken language* | The recogniser has no language identification | Set **Original language** explicitly instead of Detect automatically |
 | `503` *needs the '…' package* | A runtime package did not install | Re-run the install and preflight cells, then restart the API cell |
 | `503` *HF_TOKEN is not set* | pyannote's weights are gated | Accept the conditions on both pyannote model pages, paste a token into cell 1 |
+| `torchaudio` has no attribute `AudioMetaData` | An older notebook installed pyannote 3.x beside TorchAudio 2.9+ | Pull the latest notebook, choose **Runtime → Restart session**, then run all cells from the top |
 | Colab reports incompatible imports | A runtime dependency is incompatible | Restart the runtime and run all cells; disable Demucs first if it triggered the conflict |
 | CUDA out of memory on the n8n route | Several models remain resident | `POST /unload`, or choose a smaller checkpoint |
 

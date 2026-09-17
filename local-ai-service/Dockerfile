@@ -16,7 +16,8 @@ WORKDIR /app
 
 # Select a CPU or CUDA wheel through the build argument.
 RUN python -m pip install --upgrade pip \
- && python -m pip install --index-url "${TORCH_INDEX_URL}" "torch==${TORCH_VERSION}"
+ && python -m pip install --index-url "${TORCH_INDEX_URL}" \
+      "torch==${TORCH_VERSION}" "torchaudio==${TORCH_VERSION}"
 
 COPY colab/requirements.txt /tmp/colab-requirements.txt
 RUN python -m pip install -r /tmp/colab-requirements.txt
