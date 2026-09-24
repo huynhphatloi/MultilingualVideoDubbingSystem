@@ -126,14 +126,14 @@ make local-stop          # keeps jobs and downloaded model weights
 
 1. Open [`colab/ai_service.ipynb`](colab/ai_service.ipynb) in Google Colab and
    select a GPU runtime.
-2. Put a Hugging Face token in `HF_TOKEN`; diarization is part of every job.
-   Choose whether to install Demucs for optional background separation. See
+2. Enter a Hugging Face read token when prompted; diarization is part of every
+   job. Choose whether to install Demucs for optional background separation. See
    [Runtime packages](#runtime-packages).
 3. Run all cells. The last one prints a ready-to-run command.
 
-The launch cell stops the previous server and reloads the checkout. If the
-session was started by an older notebook version, select **Runtime → Restart
-session** before running all cells again.
+The API starts in a fresh Python process after installation, so Run all needs
+no manual runtime restart. If an older server still owns port 8000, select
+**Runtime → Restart session** before running all cells again.
 
 #### 2. Point the local stack at that session
 
@@ -327,25 +327,24 @@ Mongolian. Unsupported combinations are rejected during job validation.
 ### Runtime packages
 
 Edge TTS and pyannote are part of the standard local and Colab setup. The
-notebook exposes only the optional background-separation package:
+notebook exposes the optional background-separation package:
 
 ```python
-HF_TOKEN = ""          # required by pyannote's gated weights
 INSTALL_DEMUCS = True  # separate speech from background
 ```
 
-`HF_TOKEN` must belong to an account that accepted the conditions on both
-`pyannote/speaker-diarization-3.1` and
+The prompted `HF_TOKEN` must belong to an account that accepted the conditions
+on both `pyannote/speaker-diarization-3.1` and
 `pyannote/segmentation-3.0`.
 
-The notebook runs a dependency preflight after installation and reports
-incompatible imports before starting the API. `/capabilities` reports whether
-the required models and credentials are available, and the web UI blocks a job
-before upload if diarization cannot run.
+The notebook checks the matching Torch, TorchAudio, and TorchVision wheels in a
+fresh process, then loads pyannote before opening the tunnel. `/capabilities`
+reports whether the required models and credentials are available, and the web
+UI blocks a job before upload if diarization cannot run.
 
 The legacy `speaker-diarization-3.1` pipeline is pinned to `pyannote.audio`
-3.4.0 with the matching PyTorch/TorchAudio 2.8.0 pair. TorchAudio 2.9 removed
-the `AudioMetaData` API that this pyannote release imports.
+3.4.0 with PyTorch/TorchAudio 2.8.0 and TorchVision 0.23.0. TorchAudio 2.9
+removed the `AudioMetaData` API that this pyannote release imports.
 
 ### Environment variables — local stack
 
@@ -577,8 +576,8 @@ dependency changes require a rebuild.
 | `make start` reports auto-activation unavailable | The n8n CLI refused to activate | Open <http://localhost:5678>, open *Multilingual Dubbing*, save it, set it Active |
 | Upload rejected: *does not support target language* | The chosen engine has no such language | Pick another model; the error names working alternatives |
 | Upload rejected: *cannot detect the spoken language* | The recogniser has no language identification | Set **Original language** explicitly instead of Detect automatically |
-| `503` *needs the '…' package* | A runtime package did not install | Re-run the install and preflight cells, then restart the API cell |
-| `503` *HF_TOKEN is not set* | pyannote's weights are gated | Accept the conditions on both pyannote model pages, paste a token into cell 1 |
+| `503` *needs the '…' package* | A runtime package did not install | Run all notebook cells again |
+| `503` *HF_TOKEN is not set* | pyannote's weights are gated | Accept the conditions on both pyannote model pages, then enter a token when prompted |
 | `torchaudio` has no attribute `AudioMetaData` | An older notebook installed pyannote 3.x beside TorchAudio 2.9+ | Pull the latest notebook, choose **Runtime → Restart session**, then run all cells from the top |
 | Colab reports incompatible imports | A runtime dependency is incompatible | Restart the runtime and run all cells; disable Demucs first if it triggered the conflict |
 | CUDA out of memory on the n8n route | Several models remain resident | `POST /unload`, or choose a smaller checkpoint |
